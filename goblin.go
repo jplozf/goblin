@@ -27,6 +27,9 @@ var HISTORY_FILE = filepath.Join(os.Getenv("HOME"), ".goblin", "history")
 // lastLoadedFilePath stores the path of the last file loaded using :load.
 var lastLoadedFilePath string
 
+// currentSnippetName stores the name of the currently active snippet (without extension).
+var currentSnippetName string
+
 // initConfig ensures the configuration directory and necessary subdirectories exist.
 func initConfig() {
 	// Create the main ~/.goblin directory
@@ -245,8 +248,7 @@ func handleSave(code string, args []string) {
 			filename = fmt.Sprintf("snippet_%s.go", time.Now().Format("20060102_150405"))
 			fmt.Printf("No filename provided and no previous file loaded. Saving to new file: '%s'\n", filename)
 		}
-	} else if len(args) == 1 {
-		filename = ensureGoExtension(args[0])
+		filename = args[0]
 	} else {
 		fmt.Println("Usage: :save [<filename>]")
 		return
@@ -259,6 +261,7 @@ func handleSave(code string, args []string) {
 		return
 	}
 
+	currentSnippetName = strings.TrimSuffix(filepath.Base(filePath), ".go")
 	fmt.Printf("Code successfully saved to '%s'.\n", filePath)
 }
 
@@ -281,6 +284,7 @@ func handleLoad(codeLines *[]string, args []string) {
 	*codeLines = strings.Split(string(data), "\n")
 
 	lastLoadedFilePath = filePath // Store the last loaded file path
+	currentSnippetName = strings.TrimSuffix(filepath.Base(filePath), ".go")
 
 	fmt.Printf("Code successfully loaded from '%s'. Buffer reset and updated.\n", filePath)
 }
@@ -401,6 +405,14 @@ func handleHelp() {
 
 }
 
+func updatePrompt(rl *readline.Instance) {
+	if currentSnippetName != "" {
+		rl.SetPrompt(fmt.Sprintf("[%s]go> ", currentSnippetName))
+	} else {
+		rl.SetPrompt("go> ")
+	}
+}
+
 func main() {
 	initConfig() // Ensure ~/.goblin exists
 
@@ -411,6 +423,7 @@ func main() {
 	fmt.Println("------------------------------------------------")
 
 	var codeLines []string
+	currentSnippetName = ""
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:      "go> ",
@@ -420,6 +433,8 @@ func main() {
 		panic(err)
 	}
 	defer rl.Close()
+
+	updatePrompt(rl)
 
 	for {
 		// Read line input
@@ -446,8 +461,9 @@ func main() {
 			return
 		case ":clear":
 			codeLines = []string{}
+			currentSnippetName = ""
 			fmt.Println("Code buffer cleared.")
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":show":
 			if len(codeLines) == 0 {
@@ -459,18 +475,19 @@ func main() {
 				}
 				fmt.Println("---------------------------\n")
 			}
+			updatePrompt(rl)
 			continue
 		case ":list":
 			handleList()
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":save":
 			handleSave(strings.Join(codeLines, "\n"), args)
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":load":
 			handleLoad(&codeLines, args)
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":export":
 			if len(codeLines) == 0 {
@@ -478,11 +495,11 @@ func main() {
 				continue
 			}
 			handleExport(strings.Join(codeLines, "\n"), args)
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":edit":
 			handleEdit(&codeLines)
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":delete", ":d":
 			if len(args) != 1 {
@@ -509,10 +526,11 @@ func main() {
 				}
 				fmt.Println("---------------------------\n")
 			}
+			updatePrompt(rl)
 			continue
 		case ":help":
 			handleHelp()
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		case ":undo", ":u":
 			if len(codeLines) > 0 {
@@ -521,6 +539,7 @@ func main() {
 			} else {
 				fmt.Println("Buffer is empty, nothing to undo.")
 			}
+			updatePrompt(rl)
 			continue
 		case ":run":
 			// Execute the accumulated code
@@ -541,7 +560,7 @@ func main() {
 				fmt.Println("Code Execution Successful.")
 			}
 
-			rl.SetPrompt("go> ")
+			updatePrompt(rl)
 			continue
 		default:
 			// --- Accumulate Code ---
