@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"regexp"
+
 	"github.com/chzyer/readline"
 
 	"goblin.go/version"
@@ -33,31 +35,124 @@ func initConfig() {
 	}
 }
 
-// codeTemplate provides the minimal Go program structure required to run code.
+// codeTemplate provides the Go program structure. 
+// It separates top-level declarations from statements that run in main.
 const codeTemplate = `
 package main
 
 import (
-	// Only fmt is included by default to prevent unused import errors.
-	// Add other necessary imports (e.g., "math", "time") in your REPL input if needed.
 	"fmt"
+%s // User-provided imports
 )
 
-// Global variables or helper functions can be declared here if needed,
-// but for this simple REPL, user code is executed inside main.
+%s // Global variables, constants, types, and functions
 
 func main() {
-	// Start of user code execution block
-%s
-	// End of user code execution block
+%s // Statements
 }
 `
 
-// executeCode takes the accumulated user code, wraps it in the template,
-// writes it to a temporary file, and executes it using 'go run'.
+// executeCode takes the accumulated user code, separates declarations from statements,
+// wraps them in the template, writes to a temporary file, and executes it.
 func executeCode(code string) (string, error) {
-	// 1. Fill the template with user code
-	fullCode := fmt.Sprintf(codeTemplate, code)
+	var userImports, topLevelDeclarations, statements strings.Builder
+	lines := strings.Split(code, "\n")
+
+	// Regex for identifying different code constructs
+	importSingleRegex := regexp.MustCompile(`^import\s+(\"?[\w/.]+\"?)$`)
+	importGroupRegex := regexp.MustCompile(`^import\s*\($`)
+	globalDeclStartRegex := regexp.MustCompile(`^(var|const|type)\s+`)
+	funcDeclStartRegex := regexp.MustCompile(`^func\s+`)
+
+	inImportBlock := false
+	inGlobalDeclBlock := false // For multi-line var/const/type blocks
+	inFuncDecl := false
+	braceCount := 0
+
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+
+		// Skip empty lines at the top level, they don't affect parsing logic
+		if trimmedLine == "" && !inImportBlock && !inGlobalDeclBlock && !inFuncDecl {
+			continue
+		}
+
+		// --- Handle Import Blocks ---
+		if importGroupRegex.MatchString(trimmedLine) {
+			inImportBlock = true
+			braceCount = 1 // Start of import block
+			continue // Do not write "import (" to userImports
+		}
+		if inImportBlock {
+			braceCount += strings.Count(line, "{")
+			braceCount -= strings.Count(line, "}")
+			if braceCount <= 0 { // End of import block
+				inImportBlock = false
+				braceCount = 0 // Reset brace count
+				continue // Do not write ")" to userImports
+			}
+			// This is an import path within a group
+			userImports.WriteString(line + "\n")
+			continue
+		}
+		if matches := importSingleRegex.FindStringSubmatch(trimmedLine); len(matches) > 1 {
+			// This is a single-line import, extract the path and format it
+			userImports.WriteString("\t" + matches[1] + "\n")
+			continue
+		}
+
+		// --- Handle Global Declarations (var, const, type) ---
+		if !inFuncDecl && !inImportBlock && globalDeclStartRegex.MatchString(trimmedLine) {
+			// Check for multi-line var/const/type blocks
+			if strings.HasSuffix(trimmedLine, "(") { // e.g., var (
+				inGlobalDeclBlock = true
+				topLevelDeclarations.WriteString(line + "\n")
+				braceCount += strings.Count(line, "(")
+				braceCount -= strings.Count(line, ")")
+				continue
+			} else { // Single line var/const/type
+				topLevelDeclarations.WriteString(line + "\n")
+				continue
+			}
+		}
+		if inGlobalDeclBlock {
+			topLevelDeclarations.WriteString(line + "\n")
+			braceCount += strings.Count(line, "(")
+			braceCount -= strings.Count(line, ")")
+			if braceCount <= 0 {
+				inGlobalDeclBlock = false
+				braceCount = 0 // Reset brace count
+			}
+			continue
+		}
+
+		// --- Handle Function Declarations ---
+		if !inImportBlock && !inGlobalDeclBlock && funcDeclStartRegex.MatchString(trimmedLine) {
+			inFuncDecl = true
+			topLevelDeclarations.WriteString(line + "\n")
+			braceCount += strings.Count(line, "{")
+			braceCount -= strings.Count(line, "}")
+			continue
+		}
+		if inFuncDecl {
+			topLevelDeclarations.WriteString(line + "\n")
+			braceCount += strings.Count(line, "{")
+			braceCount -= strings.Count(line, "}")
+			if braceCount <= 0 {
+				inFuncDecl = false
+				braceCount = 0 // Reset brace count
+			}
+			continue
+		}
+
+		// --- Handle Statements (everything else) ---
+		if trimmedLine != "" {
+			statements.WriteString(line + "\n")
+		}
+	}
+
+	// 1. Fill the template with the separated code
+	fullCode := fmt.Sprintf(codeTemplate, userImports.String(), topLevelDeclarations.String(), statements.String())
 
 	// 2. Create a temporary file to hold the code
 	tmpDir, err := ioutil.TempDir("", "gorepl_tmp")
