@@ -1,17 +1,37 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/chzyer/readline"
+
+	"goblin.go/version"
 )
 
 // REPL_SAVES_DIR is the directory where code snippets will be saved and loaded from.
-const REPL_SAVES_DIR = "go_repl_saves"
+var REPL_SAVES_DIR = filepath.Join(os.Getenv("HOME"), ".goblin", "snippets")
+
+// HISTORY_FILE is the path to the command history file.
+var HISTORY_FILE = filepath.Join(os.Getenv("HOME"), ".goblin", "history")
+
+// initConfig ensures the configuration directory and necessary subdirectories exist.
+func initConfig() {
+	// Create the main ~/.goblin directory
+	if err := os.MkdirAll(filepath.Dir(REPL_SAVES_DIR), 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
+		os.Exit(1)
+	}
+	// Create the snippets subdirectory
+	if err := os.MkdirAll(REPL_SAVES_DIR, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating snippets directory: %v\n", err)
+		os.Exit(1)
+	}
+}
 
 // codeTemplate provides the minimal Go program structure required to run code.
 const codeTemplate = `
@@ -67,7 +87,7 @@ func executeCode(code string) (string, error) {
 		// Compilation or runtime error happened in the user's code.
 		return string(output), exitErr
 	}
-	
+
 	return string(output), nil
 }
 
@@ -91,7 +111,7 @@ func handleList() {
 
 	for _, file := range files {
 		if !file.IsDir() {
-			fmt.Printf("- %s (%d bytes)\n", file.Name(), file.Size())
+			fmt.Printf("> %s (%d bytes)\n", file.Name(), file.Size())
 		}
 	}
 	fmt.Println("----------------------")
@@ -105,13 +125,7 @@ func handleSave(code string, args []string) {
 	}
 	filename := args[0]
 
-	// 1. Ensure the save directory exists
-	if err := os.MkdirAll(REPL_SAVES_DIR, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating save directory: %v\n", err)
-		return
-	}
-
-	// 2. Write the code to the file
+	// 1. Write the code to the file
 	filePath := filepath.Join(REPL_SAVES_DIR, filename)
 	if err := ioutil.WriteFile(filePath, []byte(code), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving code to '%s': %v\n", filename, err)
@@ -122,7 +136,7 @@ func handleSave(code string, args []string) {
 }
 
 // handleLoad loads the specified filename into the current code buffer.
-func handleLoad(currentCode *strings.Builder, args []string) {
+func handleLoad(codeLines *[]string, args []string) {
 	if len(args) != 1 {
 		fmt.Println("Usage: :load <filename>")
 		return
@@ -137,37 +151,108 @@ func handleLoad(currentCode *strings.Builder, args []string) {
 	}
 
 	// Clear and set the new content
-	currentCode.Reset()
-	currentCode.WriteString(string(data))
+	*codeLines = strings.Split(string(data), "\n")
 
 	fmt.Printf("Code successfully loaded from '%s'. Buffer reset and updated.\n", filePath)
 }
 
+// handleEdit opens the current code buffer in an external editor.
+func handleEdit(codeLines *[]string) {
+	// 1. Create a temporary file with a .go extension
+	tmpfile, err := ioutil.TempFile("", "goblin-*.go")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating temporary file: %v\n", err)
+		return
+	}
+	defer os.Remove(tmpfile.Name()) // Clean up the file afterwards
+
+	// 2. Write the current buffer to the temporary file
+	if _, err := tmpfile.WriteString(strings.Join(*codeLines, "\n")); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing to temporary file: %v\n", err)
+		return
+	}
+	if err := tmpfile.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error closing temporary file: %v\n", err)
+		return
+	}
+
+	// 3. Get the user's preferred editor
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		// Fallback to a common default if EDITOR is not set
+		editor = "vim"
+	}
+
+	// 4. Open the file in the editor
+	cmd := exec.Command(editor, tmpfile.Name())
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening editor '%s': %v\n", editor, err)
+		return
+	}
+
+	// 5. Read the modified content back into the buffer
+	data, err := ioutil.ReadFile(tmpfile.Name())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading modified file: %v\n", err)
+		return
+	}
+
+	// 6. Reset the buffer and write the new content
+	*codeLines = strings.Split(string(data), "\n")
+
+	fmt.Println("Buffer updated from editor.")
+
+}
+
+// handleHelp displays a list of available commands.
+
+func handleHelp() {
+
+	fmt.Println("\n--- Goblin REPL Commands ---")
+	fmt.Println(":run         - Execute the current Go code in the buffer.")
+	fmt.Println(":clear       - Clear the current code buffer.")
+	fmt.Println(":show        - Display the current content of the code buffer.")
+	fmt.Println(":list        - List all saved code snippets.")
+	fmt.Println(":save <file> - Save the current code buffer to a file.")
+	fmt.Println(":load <file> - Load code from a file into the buffer, replacing current content.")
+	fmt.Println(":edit        - Open the current code buffer in an external editor for modification.")
+	fmt.Println(":undo, :u    - Remove the last entry from the buffer.")
+	fmt.Println(":help        - Display this help message.")
+	fmt.Println(":quit, :exit - Exit the REPL.")
+	fmt.Println("----------------------------")
+
+}
 
 func main() {
-	reader := bufio.NewReader(os.Stdin)
+	initConfig() // Ensure ~/.goblin exists
 
-	fmt.Println("--- Go REPL Wrapper (v1.1) ---")
+	fmt.Printf("--- Go REPL Wrapper (v%s) ---\n", version.String())
 	fmt.Println("Enter Go statements (must be valid inside func main()).")
 	fmt.Println("Use 'fmt.Println(...)' to display results.")
-	fmt.Println("Commands: ':run', ':clear', ':show', ':quit', ':save <file>', ':load <file>', ':list'")
-	fmt.Println("------------------------------")
+	fmt.Println("Use ':help' to see the available commands.")
+	fmt.Println("--------------------------------------")
 
-	var currentCode strings.Builder
-	prompt := "go> "
+	var codeLines []string
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:      "go> ",
+		HistoryFile: HISTORY_FILE,
+	})
+	if err != nil {
+		panic(err)
+	}
+	defer rl.Close()
 
 	for {
-		fmt.Print(prompt)
 		// Read line input
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			// Handle EOF (Ctrl+D) gracefully
-			if err.Error() == "EOF" {
-				fmt.Println("\nExiting REPL.")
-				break
-			}
-			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
-			continue
+		input, err := rl.Readline()
+		if err != nil { // io.EOF, readline.ErrInterrupt
+			fmt.Println("\nExiting Goblin REPL.")
+			break
 		}
 
 		line := strings.TrimSpace(input)
@@ -182,41 +267,57 @@ func main() {
 
 		// --- Handle REPL Commands ---
 		switch cmd {
-		case ":quit", ":exit":
+		case ":quit", ":exit", ":bye":
 			fmt.Println("Exiting Go REPL.")
 			return
 		case ":clear":
-			currentCode.Reset()
+			codeLines = []string{}
 			fmt.Println("Code buffer cleared.")
-			prompt = "go> "
+			rl.SetPrompt("go> ")
 			continue
 		case ":show":
-			if currentCode.Len() == 0 {
+			if len(codeLines) == 0 {
 				fmt.Println("Code buffer is empty.")
 			} else {
-				fmt.Println("\n--- Current Code Buffer ---\n" + currentCode.String() + "---------------------------\n")
+				fmt.Println("\n--- Current Code Buffer ---\n" + strings.Join(codeLines, "\n") + "\n---------------------------\n")
 			}
 			continue
 		case ":list":
 			handleList()
-			prompt = "go> "
+			rl.SetPrompt("go> ")
 			continue
 		case ":save":
-			handleSave(currentCode.String(), args)
-			prompt = "go> "
+			handleSave(strings.Join(codeLines, "\n"), args)
+			rl.SetPrompt("go> ")
 			continue
 		case ":load":
-			handleLoad(&currentCode, args)
-			prompt = "go> "
+			handleLoad(&codeLines, args)
+			rl.SetPrompt("go> ")
+			continue
+		case ":edit":
+			handleEdit(&codeLines)
+			rl.SetPrompt("go> ")
+			continue
+		case ":help":
+			handleHelp()
+			rl.SetPrompt("go> ")
+			continue
+		case ":undo", ":u":
+			if len(codeLines) > 0 {
+				codeLines = codeLines[:len(codeLines)-1]
+				fmt.Println("Last entry removed.")
+			} else {
+				fmt.Println("Buffer is empty, nothing to undo.")
+			}
 			continue
 		case ":run":
 			// Execute the accumulated code
-			if currentCode.Len() == 0 {
+			if len(codeLines) == 0 {
 				fmt.Println("No code to run. Add statements first.")
 				continue
 			}
 
-			output, execErr := executeCode(currentCode.String())
+			output, execErr := executeCode(strings.Join(codeLines, "\n"))
 
 			fmt.Println("--- Output ---")
 			fmt.Print(output)
@@ -228,13 +329,12 @@ func main() {
 				fmt.Println("Code Execution Successful.")
 			}
 
-			prompt = "go> "
+			rl.SetPrompt("go> ")
 			continue
 		default:
 			// --- Accumulate Code ---
-			currentCode.WriteString(line)
-			currentCode.WriteString("\n")
-			prompt = "  -> " // Change prompt for multi-line/subsequent input
+			codeLines = append(codeLines, line)
+			rl.SetPrompt("  -> ") // Change prompt for multi-line/subsequent input
 		}
 	}
 }
