@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"strconv"
+
 	"regexp"
 
 	"github.com/chzyer/readline"
@@ -56,10 +58,8 @@ func main() {
 }
 `
 
-// executeCode takes the accumulated user code, separates declarations from statements,
-// wraps them in the template, writes to a temporary file, and executes it.
-func executeCode(code string) (string, error) {
-	var userImports, topLevelDeclarations, statements strings.Builder
+func separateCodeParts(code string) (userImports, topLevelDeclarations, statements string) {
+	var userImportsBuilder, topLevelDeclarationsBuilder, statementsBuilder strings.Builder
 	lines := strings.Split(code, "\n")
 
 	// Regex for identifying different code constructs
@@ -85,7 +85,7 @@ func executeCode(code string) (string, error) {
 		if importGroupRegex.MatchString(trimmedLine) {
 			inImportBlock = true
 			braceCount = 1 // Start of import block
-			continue       // Do not write "import (" to userImports
+			continue       // Do not write "import (" to userImportsBuilder
 		}
 		if inImportBlock {
 			braceCount += strings.Count(line, "{")
@@ -93,15 +93,15 @@ func executeCode(code string) (string, error) {
 			if braceCount <= 0 { // End of import block
 				inImportBlock = false
 				braceCount = 0 // Reset brace count
-				continue       // Do not write ")" to userImports
+				continue       // Do not write ")" to userImportsBuilder
 			}
 			// This is an import path within a group
-			userImports.WriteString(line + "\n")
+			userImportsBuilder.WriteString(line + "\n")
 			continue
 		}
 		if matches := importSingleRegex.FindStringSubmatch(trimmedLine); len(matches) > 1 {
 			// This is a single-line import, extract the path and format it
-			userImports.WriteString("\t" + matches[1] + "\n")
+			userImportsBuilder.WriteString("\t" + matches[1] + "\n")
 			continue
 		}
 
@@ -110,17 +110,17 @@ func executeCode(code string) (string, error) {
 			// Check for multi-line var/const/type blocks
 			if strings.HasSuffix(trimmedLine, "(") { // e.g., var (
 				inGlobalDeclBlock = true
-				topLevelDeclarations.WriteString(line + "\n")
+				topLevelDeclarationsBuilder.WriteString(line + "\n")
 				braceCount += strings.Count(line, "(")
 				braceCount -= strings.Count(line, ")")
 				continue
 			} else { // Single line var/const/type
-				topLevelDeclarations.WriteString(line + "\n")
+				topLevelDeclarationsBuilder.WriteString(line + "\n")
 				continue
 			}
 		}
 		if inGlobalDeclBlock {
-			topLevelDeclarations.WriteString(line + "\n")
+			topLevelDeclarationsBuilder.WriteString(line + "\n")
 			braceCount += strings.Count(line, "(")
 			braceCount -= strings.Count(line, ")")
 			if braceCount <= 0 {
@@ -133,13 +133,13 @@ func executeCode(code string) (string, error) {
 		// --- Handle Function Declarations ---
 		if !inImportBlock && !inGlobalDeclBlock && funcDeclStartRegex.MatchString(trimmedLine) {
 			inFuncDecl = true
-			topLevelDeclarations.WriteString(line + "\n")
+			topLevelDeclarationsBuilder.WriteString(line + "\n")
 			braceCount += strings.Count(line, "{")
 			braceCount -= strings.Count(line, "}")
 			continue
 		}
 		if inFuncDecl {
-			topLevelDeclarations.WriteString(line + "\n")
+			topLevelDeclarationsBuilder.WriteString(line + "\n")
 			braceCount += strings.Count(line, "{")
 			braceCount -= strings.Count(line, "}")
 			if braceCount <= 0 {
@@ -151,12 +151,20 @@ func executeCode(code string) (string, error) {
 
 		// --- Handle Statements (everything else) ---
 		if trimmedLine != "" {
-			statements.WriteString(line + "\n")
+			statementsBuilder.WriteString(line + "\n")
 		}
 	}
 
+	return userImportsBuilder.String(), topLevelDeclarationsBuilder.String(), statementsBuilder.String()
+}
+
+// executeCode takes the accumulated user code, separates declarations from statements,
+// wraps them in the template, writes to a temporary file, and executes it.
+func executeCode(code string) (string, error) {
+	userImports, topLevelDeclarations, statements := separateCodeParts(code)
+
 	// 1. Fill the template with the separated code
-	fullCode := fmt.Sprintf(codeTemplate, userImports.String(), topLevelDeclarations.String(), statements.String())
+	fullCode := fmt.Sprintf(codeTemplate, userImports, topLevelDeclarations, statements)
 
 	// 2. Create a temporary file to hold the code
 	tmpDir, err := ioutil.TempDir("", "gorepl_tmp")
@@ -216,13 +224,21 @@ func handleList() {
 	fmt.Println("----------------------")
 }
 
+// ensureGoExtension checks if the filename has a .go extension and adds it if missing.
+func ensureGoExtension(filename string) string {
+	if !strings.HasSuffix(filename, ".go") {
+		return filename + ".go"
+	}
+	return filename
+}
+
 // handleSave saves the current code buffer to the specified filename.
 func handleSave(code string, args []string) {
 	filename := ""
 
 	if len(args) == 0 {
 		if lastLoadedFilePath != "" {
-			filename = filepath.Base(lastLoadedFilePath)
+			filename = ensureGoExtension(filepath.Base(lastLoadedFilePath))
 			fmt.Printf("No filename provided. Saving to last loaded file: '%s'\n", filename)
 		} else {
 			// Generate a random filename based on timestamp
@@ -230,7 +246,7 @@ func handleSave(code string, args []string) {
 			fmt.Printf("No filename provided and no previous file loaded. Saving to new file: '%s'\n", filename)
 		}
 	} else if len(args) == 1 {
-		filename = args[0]
+		filename = ensureGoExtension(args[0])
 	} else {
 		fmt.Println("Usage: :save [<filename>]")
 		return
@@ -252,7 +268,7 @@ func handleLoad(codeLines *[]string, args []string) {
 		fmt.Println("Usage: :load <filename>")
 		return
 	}
-	filename := args[0]
+	filename := ensureGoExtension(args[0])
 	filePath := filepath.Join(REPL_SAVES_DIR, filename)
 
 	data, err := ioutil.ReadFile(filePath)
@@ -267,6 +283,49 @@ func handleLoad(codeLines *[]string, args []string) {
 	lastLoadedFilePath = filePath // Store the last loaded file path
 
 	fmt.Printf("Code successfully loaded from '%s'. Buffer reset and updated.\n", filePath)
+}
+
+// handleExport exports the current code buffer to a full Go source file.
+func handleExport(code string, args []string) {
+	outputPath := ""
+
+	if len(args) == 0 {
+		filename := ""
+		if lastLoadedFilePath != "" {
+			filename = ensureGoExtension(filepath.Base(lastLoadedFilePath))
+			fmt.Printf("No filename provided. Exporting to last loaded file name: '%s' in home directory.\n", filename)
+		} else {
+			filename = fmt.Sprintf("snippet_%s.go", time.Now().Format("20060102_150405"))
+			fmt.Printf("No filename provided and no previous file loaded. Exporting to new file: '%s' in home directory.\n", filename)
+		}
+		outputPath = filepath.Join(os.Getenv("HOME"), filename)
+	} else if len(args) == 1 {
+		outputPath = ensureGoExtension(args[0])
+	} else {
+		fmt.Println("Usage: :export [<filepath>]")
+		return
+	}
+
+	// Separate code parts
+	userImports, topLevelDeclarations, statements := separateCodeParts(code)
+
+	// Fill the template with the separated code
+	fullCode := fmt.Sprintf(codeTemplate, userImports, topLevelDeclarations, statements)
+
+	// Ensure the directory exists
+	dir := filepath.Dir(outputPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating directory '%s': %v\n", dir, err)
+		return
+	}
+
+	// Write the code to the file
+	if err := ioutil.WriteFile(outputPath, []byte(fullCode), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error exporting code to '%s': %v\n", outputPath, err)
+		return
+	}
+
+	fmt.Printf("Code successfully exported to '%s'.\n", outputPath)
 }
 
 // handleEdit opens the current code buffer in an external editor.
@@ -325,18 +384,20 @@ func handleEdit(codeLines *[]string) {
 
 func handleHelp() {
 
-	fmt.Println("\n------ Goblin REPL Commands ------")
-	fmt.Println(":run               - Execute the current Go code in the buffer.")
-	fmt.Println(":clear             - Clear the current code buffer.")
-	fmt.Println(":show              - Display the current content of the code buffer.")
-	fmt.Println(":list              - List all saved code snippets.")
-	fmt.Println(":save <file>       - Save the current code buffer to a file.")
-	fmt.Println(":load <file>       - Load code from a file into the buffer, replacing current content.")
-	fmt.Println(":edit              - Open the current code buffer in an external editor for modification.")
-	fmt.Println(":undo, :u          - Remove the last entry from the buffer.")
-	fmt.Println(":help              - Display this help message.")
-	fmt.Println(":quit, :exit, :bye - Exit the REPL.")
-	fmt.Println("----------------------------------")
+	fmt.Printf("\n------ Goblin REPL Commands (v%s)\n", version.String())
+	fmt.Println(":run                  - Execute the current Go code in the buffer.")
+	fmt.Println(":clear                - Clear the current code buffer.")
+	fmt.Println(":show                 - Display the current content of the code buffer.")
+	fmt.Println(":list                 - List all saved code snippets.")
+	fmt.Println(":save <file>          - Save the current code buffer to a file.")
+	fmt.Println(":load <file>          - Load code from a file into the buffer, replacing current content.")
+	fmt.Println(":export <filepath>    - Export the current code buffer to a full Go source file.")
+	fmt.Println(":edit                 - Open the current code buffer in an external editor for modification.")
+	fmt.Println(":u(ndo)               - Remove the last entry from the buffer.")
+	fmt.Println(":d(elete) <line>      - Delete a specific line from the buffer by its number.")
+	fmt.Println(":help                 - Display this help message.")
+	fmt.Println(":q(uit), :exit, :bye  - Exit the REPL.")
+	fmt.Println("--------------------------------------------------------------------------------------------")
 
 }
 
@@ -380,7 +441,7 @@ func main() {
 
 		// --- Handle REPL Commands ---
 		switch cmd {
-		case ":quit", ":exit", ":bye":
+		case ":quit", ":exit", ":bye", ":q":
 			fmt.Println("Exiting Goblin REPL.")
 			return
 		case ":clear":
@@ -392,7 +453,11 @@ func main() {
 			if len(codeLines) == 0 {
 				fmt.Println("Code buffer is empty.")
 			} else {
-				fmt.Println("\n--- Current Code Buffer ---\n" + strings.Join(codeLines, "\n") + "\n---------------------------\n")
+				fmt.Println("\n--- Current Code Buffer ---")
+				for i, line := range codeLines {
+					fmt.Printf("%4d: %s\n", i+1, line)
+				}
+				fmt.Println("---------------------------\n")
 			}
 			continue
 		case ":list":
@@ -407,9 +472,43 @@ func main() {
 			handleLoad(&codeLines, args)
 			rl.SetPrompt("go> ")
 			continue
+		case ":export":
+			if len(codeLines) == 0 {
+				fmt.Println("No code in buffer to export.")
+				continue
+			}
+			handleExport(strings.Join(codeLines, "\n"), args)
+			rl.SetPrompt("go> ")
+			continue
 		case ":edit":
 			handleEdit(&codeLines)
 			rl.SetPrompt("go> ")
+			continue
+		case ":delete", ":d":
+			if len(args) != 1 {
+				fmt.Println("Usage: :delete <line_number>")
+				continue
+			}
+			lineNum, err := strconv.Atoi(args[0])
+			if err != nil || lineNum < 1 || lineNum > len(codeLines) {
+				fmt.Printf("Invalid line number: %s. Please provide a number between 1 and %d.\n", args[0], len(codeLines))
+				continue
+			}
+			// Adjust for 0-based indexing
+			indexToDelete := lineNum - 1
+			codeLines = append(codeLines[:indexToDelete], codeLines[indexToDelete+1:]...)
+			fmt.Printf("Line %d deleted. Current buffer:\n", lineNum)
+			// Re-display the buffer with line numbers
+			// This re-uses the logic from the :show command
+			if len(codeLines) == 0 {
+				fmt.Println("Code buffer is empty.")
+			} else {
+				fmt.Println("\n--- Current Code Buffer ---")
+				for i, line := range codeLines {
+					fmt.Printf("%4d: %s\n", i+1, line)
+				}
+				fmt.Println("---------------------------\n")
+			}
 			continue
 		case ":help":
 			handleHelp()
