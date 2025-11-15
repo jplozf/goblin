@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"regexp"
 
@@ -20,6 +21,9 @@ var REPL_SAVES_DIR = filepath.Join(os.Getenv("HOME"), ".goblin", "snippets")
 
 // HISTORY_FILE is the path to the command history file.
 var HISTORY_FILE = filepath.Join(os.Getenv("HOME"), ".goblin", "history")
+
+// lastLoadedFilePath stores the path of the last file loaded using :load.
+var lastLoadedFilePath string
 
 // initConfig ensures the configuration directory and necessary subdirectories exist.
 func initConfig() {
@@ -35,7 +39,7 @@ func initConfig() {
 	}
 }
 
-// codeTemplate provides the Go program structure. 
+// codeTemplate provides the Go program structure.
 // It separates top-level declarations from statements that run in main.
 const codeTemplate = `
 package main
@@ -81,7 +85,7 @@ func executeCode(code string) (string, error) {
 		if importGroupRegex.MatchString(trimmedLine) {
 			inImportBlock = true
 			braceCount = 1 // Start of import block
-			continue // Do not write "import (" to userImports
+			continue       // Do not write "import (" to userImports
 		}
 		if inImportBlock {
 			braceCount += strings.Count(line, "{")
@@ -89,7 +93,7 @@ func executeCode(code string) (string, error) {
 			if braceCount <= 0 { // End of import block
 				inImportBlock = false
 				braceCount = 0 // Reset brace count
-				continue // Do not write ")" to userImports
+				continue       // Do not write ")" to userImports
 			}
 			// This is an import path within a group
 			userImports.WriteString(line + "\n")
@@ -214,11 +218,23 @@ func handleList() {
 
 // handleSave saves the current code buffer to the specified filename.
 func handleSave(code string, args []string) {
-	if len(args) != 1 {
-		fmt.Println("Usage: :save <filename>")
+	filename := ""
+
+	if len(args) == 0 {
+		if lastLoadedFilePath != "" {
+			filename = filepath.Base(lastLoadedFilePath)
+			fmt.Printf("No filename provided. Saving to last loaded file: '%s'\n", filename)
+		} else {
+			// Generate a random filename based on timestamp
+			filename = fmt.Sprintf("snippet_%s.go", time.Now().Format("20060102_150405"))
+			fmt.Printf("No filename provided and no previous file loaded. Saving to new file: '%s'\n", filename)
+		}
+	} else if len(args) == 1 {
+		filename = args[0]
+	} else {
+		fmt.Println("Usage: :save [<filename>]")
 		return
 	}
-	filename := args[0]
 
 	// 1. Write the code to the file
 	filePath := filepath.Join(REPL_SAVES_DIR, filename)
@@ -247,6 +263,8 @@ func handleLoad(codeLines *[]string, args []string) {
 
 	// Clear and set the new content
 	*codeLines = strings.Split(string(data), "\n")
+
+	lastLoadedFilePath = filePath // Store the last loaded file path
 
 	fmt.Printf("Code successfully loaded from '%s'. Buffer reset and updated.\n", filePath)
 }
@@ -307,29 +325,29 @@ func handleEdit(codeLines *[]string) {
 
 func handleHelp() {
 
-	fmt.Println("\n--- Goblin REPL Commands ---")
-	fmt.Println(":run         - Execute the current Go code in the buffer.")
-	fmt.Println(":clear       - Clear the current code buffer.")
-	fmt.Println(":show        - Display the current content of the code buffer.")
-	fmt.Println(":list        - List all saved code snippets.")
-	fmt.Println(":save <file> - Save the current code buffer to a file.")
-	fmt.Println(":load <file> - Load code from a file into the buffer, replacing current content.")
-	fmt.Println(":edit        - Open the current code buffer in an external editor for modification.")
-	fmt.Println(":undo, :u    - Remove the last entry from the buffer.")
-	fmt.Println(":help        - Display this help message.")
-	fmt.Println(":quit, :exit - Exit the REPL.")
-	fmt.Println("----------------------------")
+	fmt.Println("\n------ Goblin REPL Commands ------")
+	fmt.Println(":run               - Execute the current Go code in the buffer.")
+	fmt.Println(":clear             - Clear the current code buffer.")
+	fmt.Println(":show              - Display the current content of the code buffer.")
+	fmt.Println(":list              - List all saved code snippets.")
+	fmt.Println(":save <file>       - Save the current code buffer to a file.")
+	fmt.Println(":load <file>       - Load code from a file into the buffer, replacing current content.")
+	fmt.Println(":edit              - Open the current code buffer in an external editor for modification.")
+	fmt.Println(":undo, :u          - Remove the last entry from the buffer.")
+	fmt.Println(":help              - Display this help message.")
+	fmt.Println(":quit, :exit, :bye - Exit the REPL.")
+	fmt.Println("----------------------------------")
 
 }
 
 func main() {
 	initConfig() // Ensure ~/.goblin exists
 
-	fmt.Printf("--- Go REPL Wrapper (v%s) ---\n", version.String())
-	fmt.Println("Enter Go statements (must be valid inside func main()).")
-	fmt.Println("Use 'fmt.Println(...)' to display results.")
-	fmt.Println("Use ':help' to see the available commands.")
-	fmt.Println("--------------------------------------")
+	fmt.Printf("------ Goblin REPL Wrapper (v%s) ------\n", version.String())
+	fmt.Println("> Enter Go statements and :run to execute.")
+	fmt.Println("> Use 'fmt.Println(...)' to display results.")
+	fmt.Println("> Use ':help' to see the available commands.")
+	fmt.Println("------------------------------------------------")
 
 	var codeLines []string
 
@@ -363,7 +381,7 @@ func main() {
 		// --- Handle REPL Commands ---
 		switch cmd {
 		case ":quit", ":exit", ":bye":
-			fmt.Println("Exiting Go REPL.")
+			fmt.Println("Exiting Goblin REPL.")
 			return
 		case ":clear":
 			codeLines = []string{}
