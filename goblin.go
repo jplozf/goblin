@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/format"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -120,8 +121,8 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 			continue       // Do not write "import (" to userImportsBuilder
 		}
 		if inImportBlock {
-			braceCount += strings.Count(line, "{")
-			braceCount -= strings.Count(line, "}")
+			braceCount += strings.Count(line, "(")
+			braceCount -= strings.Count(line, ")")
 			if braceCount <= 0 { // End of import block
 				inImportBlock = false
 				braceCount = 0 // Reset brace count
@@ -269,7 +270,10 @@ func handleSave(code string, args []string) {
 	filename := ""
 
 	if len(args) == 0 {
-		if lastLoadedFilePath != "" {
+		if currentSnippetName != "" {
+			filename = ensureGoExtension(currentSnippetName)
+			fmt.Printf("No filename provided. Saving to current snippet: '%s'\n", filename)
+		} else if lastLoadedFilePath != "" {
 			filename = ensureGoExtension(filepath.Base(lastLoadedFilePath))
 			fmt.Printf("No filename provided. Saving to last loaded file: '%s'\n", filename)
 		} else {
@@ -422,6 +426,86 @@ func handleRename(args []string) {
 	fmt.Printf("Snippet successfully renamed to '%s'.\n", newFilename)
 }
 
+// handleTidy formats the current code buffer using go/format.
+func handleTidy(code string) ([]string, error) {
+	// A local template for formatting. Comments are removed to prevent them
+	// from being inserted into the buffer.
+	const codeTemplateForTidy = `
+package main
+
+import (
+%s
+)
+
+%s
+
+func main() {
+%s
+}
+`
+	// 1. Assemble the code into a valid Go program using the local template.
+	userImports, topLevelDeclarations, statements := separateCodeParts(code)
+	fullCode := fmt.Sprintf(codeTemplateForTidy, userImports, topLevelDeclarations, statements)
+
+	// 2. Format the entire program's source code.
+	formattedSource, err := format.Source([]byte(fullCode))
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Parse the formatted code back into its constituent parts.
+	// We ignore the 'statements' part of the output, as it will incorrectly contain "package main".
+	formattedImports, formattedTopLevel, _ := separateCodeParts(string(formattedSource))
+
+	// 4. The separateCodeParts function incorrectly puts the entire main function
+	// into formattedTopLevel. We need to extract the statements from it.
+	var formattedStatements string
+	mainFuncRegex := regexp.MustCompile(`(?s)func main\(\) \{\n?(.*)\n\s*\}`)
+	matches := mainFuncRegex.FindStringSubmatch(formattedTopLevel)
+
+	if len(matches) > 1 {
+		// The captured content of main becomes our statements.
+		formattedStatements = strings.Trim(matches[1], "\n")
+		// Remove the main function from formattedTopLevel.
+		formattedTopLevel = mainFuncRegex.ReplaceAllString(formattedTopLevel, "")
+	}
+
+	// 5. Reconstruct the buffer by concatenating the formatted parts with proper spacing.
+	var finalParts []string
+
+	// Handle imports
+	importLines := strings.Split(strings.TrimSpace(formattedImports), "\n")
+	if len(importLines) > 0 && importLines[0] != "" {
+		var importBlock string
+		if len(importLines) == 1 {
+			importBlock = "import " + strings.TrimSpace(importLines[0])
+		} else {
+			importBlock = "import (\n" + strings.Join(importLines, "\n") + "\n)"
+		}
+		finalParts = append(finalParts, importBlock)
+	}
+
+	// Handle top-level declarations
+	cleanedTopLevel := strings.TrimSpace(formattedTopLevel)
+	if cleanedTopLevel != "" {
+		finalParts = append(finalParts, cleanedTopLevel)
+	}
+
+	// Handle statements
+	cleanedStatements := strings.TrimSpace(formattedStatements)
+	if cleanedStatements != "" {
+		finalParts = append(finalParts, cleanedStatements)
+	}
+
+	// Join the parts with appropriate spacing
+	finalBufferContent := strings.Join(finalParts, "\n\n")
+
+	if finalBufferContent == "" {
+		return []string{}, nil
+	}
+	return strings.Split(finalBufferContent, "\n"), nil
+}
+
 // handleEdit opens the current code buffer in an external editor.
 func handleEdit(codeLines *[]string) {
 	// 1. Create a temporary file with a .go extension
@@ -482,6 +566,7 @@ func handleHelp() {
 	fmt.Println(":run                  - Execute the current Go code in the buffer.")
 	fmt.Println(":clear                - Clear the current code buffer.")
 	fmt.Println(":show                 - Display the current content of the code buffer.")
+	fmt.Println(":tidy                 - Format the code in the buffer.")
 	fmt.Println(":list                 - List all saved code snippets.")
 	fmt.Println(":save <file>          - Save the current code buffer to a file.")
 	fmt.Println(":saveas <file>        - Save the current buffer to a new file and make it the active snippet.")
@@ -595,6 +680,7 @@ func main() {
 			}
 			codeLines = []string{}
 			currentSnippetName = ""
+			lastLoadedFilePath = "" // Reset the last loaded file path
 			nextInputReplacesLine = 0 // Reset insert mode
 			bufferDirty = false
 			fmt.Println("Code buffer cleared.")
@@ -736,6 +822,31 @@ func main() {
 			if nextInputReplacesLine == 0 {
 				updatePrompt(rl)
 			}
+			continue
+		case ":tidy":
+			if len(codeLines) == 0 {
+				fmt.Println("No code in buffer to tidy.")
+				continue
+			}
+			tidiedLines, err := handleTidy(strings.Join(codeLines, "\n"))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error tidying code: %v\n", err)
+				continue
+			}
+			codeLines = tidiedLines
+			bufferDirty = true
+			fmt.Println("Code buffer tidied.")
+			// Re-display the buffer with line numbers
+			if len(codeLines) == 0 {
+				fmt.Println("Code buffer is empty.")
+			} else {
+				fmt.Println("\n--- Current Code Buffer ---")
+				for i, line := range codeLines {
+					fmt.Printf("%4d: %s\n", i+1, line)
+				}
+				fmt.Println("---------------------------\n")
+			}
+			updatePrompt(rl)
 			continue
 		case ":run":
 			if nextInputReplacesLine > 0 {
