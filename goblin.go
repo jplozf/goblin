@@ -248,11 +248,11 @@ func handleSave(code string, args []string) {
 			filename = fmt.Sprintf("snippet_%s.go", time.Now().Format("20060102_150405"))
 			fmt.Printf("No filename provided and no previous file loaded. Saving to new file: '%s'\n", filename)
 		}
-		filename = args[0]
-	} else {
-		fmt.Println("Usage: :save [<filename>]")
-		return
+	} else if len(args) >= 1 {
+		filename = ensureGoExtension(strings.Join(args, " "))
 	}
+
+	currentSnippetName = strings.TrimSuffix(filename, ".go")
 
 	// 1. Write the code to the file
 	filePath := filepath.Join(REPL_SAVES_DIR, filename)
@@ -261,7 +261,6 @@ func handleSave(code string, args []string) {
 		return
 	}
 
-	currentSnippetName = strings.TrimSuffix(filepath.Base(filePath), ".go")
 	fmt.Printf("Code successfully saved to '%s'.\n", filePath)
 }
 
@@ -303,8 +302,8 @@ func handleExport(code string, args []string) {
 			fmt.Printf("No filename provided and no previous file loaded. Exporting to new file: '%s' in home directory.\n", filename)
 		}
 		outputPath = filepath.Join(os.Getenv("HOME"), filename)
-	} else if len(args) == 1 {
-		outputPath = ensureGoExtension(args[0])
+	} else if len(args) >= 1 {
+		outputPath = ensureGoExtension(strings.Join(args, " "))
 	} else {
 		fmt.Println("Usage: :export [<filepath>]")
 		return
@@ -330,6 +329,68 @@ func handleExport(code string, args []string) {
 	}
 
 	fmt.Printf("Code successfully exported to '%s'.\n", outputPath)
+}
+
+// handleSaveAs saves the current code buffer to a new file with the specified name,
+// and then sets this new file as the currently active snippet.
+func handleSaveAs(code string, args []string) {
+	if len(args) != 1 {
+		fmt.Println("Usage: :saveas <new_filename>")
+		return
+	}
+
+	newFilename := ensureGoExtension(args[0])
+	newFilePath := filepath.Join(REPL_SAVES_DIR, newFilename)
+
+	// Check if the new file name already exists
+	if _, err := os.Stat(newFilePath); err == nil {
+		fmt.Fprintf(os.Stderr, "Error: A snippet named '%s' already exists. Choose a different name.\n", newFilename)
+		return
+	}
+
+	// Write the current code to the new file
+	if err := ioutil.WriteFile(newFilePath, []byte(code), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving code to '%s': %v\n", newFilename, err)
+		return
+	}
+
+	// Update the current snippet to the new file
+	lastLoadedFilePath = newFilePath
+	currentSnippetName = strings.TrimSuffix(newFilename, ".go")
+
+	fmt.Printf("Code successfully saved as '%s'. Current snippet is now '%s'.\n", newFilename, currentSnippetName)
+}
+
+// handleRename renames the current code buffer's associated file.
+func handleRename(args []string) {
+	if len(args) != 1 {
+		fmt.Println("Usage: :rename <new_filename>")
+		return
+	}
+
+	if lastLoadedFilePath == "" {
+		fmt.Println("No snippet is currently loaded or saved to rename. Use :save first.")
+		return
+	}
+
+	oldFilePath := lastLoadedFilePath
+	newFilename := ensureGoExtension(args[0])
+	newFilePath := filepath.Join(REPL_SAVES_DIR, newFilename)
+
+	// Check if the new file name already exists
+	if _, err := os.Stat(newFilePath); err == nil {
+		fmt.Fprintf(os.Stderr, "Error: A snippet named '%s' already exists. Choose a different name.\n", newFilename)
+		return
+	}
+
+	if err := os.Rename(oldFilePath, newFilePath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error renaming snippet from '%s' to '%s': %v\n", filepath.Base(oldFilePath), newFilename, err)
+		return
+	}
+
+	lastLoadedFilePath = newFilePath
+	currentSnippetName = strings.TrimSuffix(newFilename, ".go")
+	fmt.Printf("Snippet successfully renamed to '%s'.\n", newFilename)
 }
 
 // handleEdit opens the current code buffer in an external editor.
@@ -394,11 +455,14 @@ func handleHelp() {
 	fmt.Println(":show                 - Display the current content of the code buffer.")
 	fmt.Println(":list                 - List all saved code snippets.")
 	fmt.Println(":save <file>          - Save the current code buffer to a file.")
+	fmt.Println(":saveas <file>        - Save the current buffer to a new file and make it the active snippet.")
 	fmt.Println(":load <file>          - Load code from a file into the buffer, replacing current content.")
+	fmt.Println(":rename <new_name>    - Rename the current snippet.")
 	fmt.Println(":export <filepath>    - Export the current code buffer to a full Go source file.")
 	fmt.Println(":edit                 - Open the current code buffer in an external editor for modification.")
 	fmt.Println(":u(ndo)               - Remove the last entry from the buffer.")
 	fmt.Println(":d(elete) <line>      - Delete a specific line from the buffer by its number.")
+	fmt.Println(":i(nsert) <line>      - Insert an empty line before the provided line number.")
 	fmt.Println(":help                 - Display this help message.")
 	fmt.Println(":q(uit), :exit, :bye  - Exit the REPL.")
 	fmt.Println("--------------------------------------------------------------------------------------------")
@@ -423,6 +487,7 @@ func main() {
 	fmt.Println("------------------------------------------------")
 
 	var codeLines []string
+	var nextInputReplacesLine = 0 // 0 means append, > 0 means replace line number
 	currentSnippetName = ""
 
 	rl, err := readline.NewEx(&readline.Config{
@@ -437,6 +502,11 @@ func main() {
 	updatePrompt(rl)
 
 	for {
+		// Set prompt based on mode (insert vs. normal)
+		if nextInputReplacesLine > 0 {
+			rl.SetPrompt(fmt.Sprintf("%4d> ", nextInputReplacesLine))
+		}
+
 		// Read line input
 		input, err := rl.Readline()
 		if err != nil { // io.EOF, readline.ErrInterrupt
@@ -444,8 +514,26 @@ func main() {
 			break
 		}
 
+		// If in replace mode and user enters empty line, consider it "done"
+		if nextInputReplacesLine > 0 && strings.TrimSpace(input) == "" {
+			fmt.Printf("Line %d remains empty.\n", nextInputReplacesLine)
+			nextInputReplacesLine = 0
+			updatePrompt(rl)
+			continue
+		}
+
 		line := strings.TrimSpace(input)
 		fields := strings.Fields(line) // Split input into command and arguments
+
+		// If not a command and in replace mode, replace the line content
+		isCommand := len(fields) > 0 && strings.HasPrefix(fields[0], ":")
+		if nextInputReplacesLine > 0 && !isCommand {
+			codeLines[nextInputReplacesLine-1] = input
+			fmt.Printf("Line %d updated.\n", nextInputReplacesLine)
+			nextInputReplacesLine = 0
+			updatePrompt(rl)
+			continue
+		}
 
 		if len(fields) == 0 {
 			continue // Skip empty line
@@ -462,6 +550,7 @@ func main() {
 		case ":clear":
 			codeLines = []string{}
 			currentSnippetName = ""
+			nextInputReplacesLine = 0 // Reset insert mode
 			fmt.Println("Code buffer cleared.")
 			updatePrompt(rl)
 			continue
@@ -475,18 +564,26 @@ func main() {
 				}
 				fmt.Println("---------------------------\n")
 			}
-			updatePrompt(rl)
+			// Do not reset prompt if in insert mode
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
 			continue
 		case ":list":
 			handleList()
-			updatePrompt(rl)
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
 			continue
 		case ":save":
 			handleSave(strings.Join(codeLines, "\n"), args)
-			updatePrompt(rl)
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
 			continue
 		case ":load":
 			handleLoad(&codeLines, args)
+			nextInputReplacesLine = 0 // Reset insert mode
 			updatePrompt(rl)
 			continue
 		case ":export":
@@ -495,10 +592,42 @@ func main() {
 				continue
 			}
 			handleExport(strings.Join(codeLines, "\n"), args)
-			updatePrompt(rl)
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
 			continue
 		case ":edit":
 			handleEdit(&codeLines)
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
+			continue
+		case ":insert", ":i":
+			if len(args) != 1 {
+				fmt.Println("Usage: :insert <line_number>")
+				continue
+			}
+			lineNum, err := strconv.Atoi(args[0])
+			if err != nil || lineNum < 1 || lineNum > len(codeLines)+1 {
+				fmt.Printf("Invalid line number: %s. Please provide a number between 1 and %d.\n", args[0], len(codeLines)+1)
+				continue
+			}
+			// Adjust for 0-based indexing
+			indexToInsert := lineNum - 1
+			codeLines = append(codeLines[:indexToInsert], append([]string{""}, codeLines[indexToInsert:]...)...)
+			fmt.Printf("Empty line inserted at line %d. Enter code at the prompt.\n", lineNum)
+			nextInputReplacesLine = lineNum // Set state for next input
+			continue
+		case ":rename":
+			handleRename(args)
+			updatePrompt(rl)
+			continue
+		case ":saveas":
+			if len(codeLines) == 0 {
+				fmt.Println("No code in buffer to save.")
+				continue
+			}
+			handleSaveAs(strings.Join(codeLines, "\n"), args)
 			updatePrompt(rl)
 			continue
 		case ":delete", ":d":
@@ -511,12 +640,18 @@ func main() {
 				fmt.Printf("Invalid line number: %s. Please provide a number between 1 and %d.\n", args[0], len(codeLines))
 				continue
 			}
+
+			// Cancel insert mode if it's affected
+			if nextInputReplacesLine > 0 {
+				fmt.Println("Insert mode cancelled.")
+				nextInputReplacesLine = 0
+			}
+
 			// Adjust for 0-based indexing
 			indexToDelete := lineNum - 1
 			codeLines = append(codeLines[:indexToDelete], codeLines[indexToDelete+1:]...)
 			fmt.Printf("Line %d deleted. Current buffer:\n", lineNum)
 			// Re-display the buffer with line numbers
-			// This re-uses the logic from the :show command
 			if len(codeLines) == 0 {
 				fmt.Println("Code buffer is empty.")
 			} else {
@@ -530,7 +665,9 @@ func main() {
 			continue
 		case ":help":
 			handleHelp()
-			updatePrompt(rl)
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
 			continue
 		case ":undo", ":u":
 			if len(codeLines) > 0 {
@@ -539,9 +676,15 @@ func main() {
 			} else {
 				fmt.Println("Buffer is empty, nothing to undo.")
 			}
-			updatePrompt(rl)
+			if nextInputReplacesLine == 0 {
+				updatePrompt(rl)
+			}
 			continue
 		case ":run":
+			if nextInputReplacesLine > 0 {
+				fmt.Println("Cannot run while in insert mode. Finish editing the line first.")
+				continue
+			}
 			// Execute the accumulated code
 			if len(codeLines) == 0 {
 				fmt.Println("No code to run. Add statements first.")
@@ -564,8 +707,8 @@ func main() {
 			continue
 		default:
 			// --- Accumulate Code ---
-			codeLines = append(codeLines, line)
-			rl.SetPrompt("  -> ") // Change prompt for multi-line/subsequent input
+			codeLines = append(codeLines, input) // Use raw input to preserve indentation
+			rl.SetPrompt(" -> ")                 // Change prompt for multi-line/subsequent input
 		}
 	}
 }
