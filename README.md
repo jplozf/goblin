@@ -3,14 +3,14 @@
 Goblin is a simple REPL for writing and testing small snippets in Go language.
 
 ```
------- Goblin REPL Wrapper (v0.10-ce7afb1) ------
++----- Goblin REPL Wrapper (v0.11-e9a9912) -----+
 >  Enter Go statements and  :run  to  execute.  <
 >  Use 'fmt.Println(...)' to display  results.  <
 >  Use ':help' to see the available  commands.  <
--------------------------------------------------
++-----------------------------------------------+
 go> :help
 
------- Goblin REPL Commands (v0.9-0b1b2e0)
+------ Goblin REPL Commands (v0.11-e9a9912)
 :run                  - Execute the current Go code in the buffer.
 :clear                - Clear the current code buffer.
 :show                 - Display the current content of the code buffer.

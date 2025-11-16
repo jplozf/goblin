@@ -509,11 +509,11 @@ func updatePrompt(rl *readline.Instance) {
 func main() {
 	initConfig() // Ensure ~/.goblin exists
 
-	fmt.Printf("------ Goblin REPL Wrapper (v%s) ------\n", version.String())
+	fmt.Printf("+----- Goblin REPL Wrapper (v%s) -----+\n", version.String())
 	fmt.Println(">  Enter Go statements and  :run  to  execute.  <")
 	fmt.Println(">  Use 'fmt.Println(...)' to display  results.  <")
 	fmt.Println(">  Use ':help' to see the available  commands.  <")
-	fmt.Println("-------------------------------------------------")
+	fmt.Println("+-----------------------------------------------+")
 
 	var codeLines []string
 	var nextInputReplacesLine = 0 // 0 means append, > 0 means replace line number
