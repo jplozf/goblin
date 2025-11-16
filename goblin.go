@@ -30,6 +30,35 @@ var lastLoadedFilePath string
 // currentSnippetName stores the name of the currently active snippet (without extension).
 var currentSnippetName string
 
+// bufferDirty tracks whether the content of the code buffer has changed since the last save.
+var bufferDirty bool
+
+// promptToSave checks if the buffer is dirty and asks the user to save.
+// It returns true if the calling action (e.g., exit, load) should proceed, false otherwise.
+func promptToSave(rl *readline.Instance, code string) bool {
+	if !bufferDirty {
+		return true // Not dirty, proceed
+	}
+
+	rl.SetPrompt("Current snippet has unsaved changes. Save now? (y/n) ")
+	answer, err := rl.Readline()
+	if err != nil {
+		fmt.Println("\nOperation cancelled.")
+		return false // Error reading line, cancel action
+	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer == "y" || answer == "yes" {
+		handleSave(code, []string{}) // Save with default name
+		return true                  // Proceed after saving
+	} else if answer == "n" || answer == "no" {
+		return true // Proceed without saving
+	}
+
+	fmt.Println("Invalid input. Operation cancelled.")
+	return false // Invalid input, cancel action
+}
+
 // initConfig ensures the configuration directory and necessary subdirectories exist.
 func initConfig() {
 	// Create the main ~/.goblin directory
@@ -489,6 +518,7 @@ func main() {
 	var codeLines []string
 	var nextInputReplacesLine = 0 // 0 means append, > 0 means replace line number
 	currentSnippetName = ""
+	bufferDirty = false
 
 	rl, err := readline.NewEx(&readline.Config{
 		Prompt:      "go> ",
@@ -510,6 +540,10 @@ func main() {
 		// Read line input
 		input, err := rl.Readline()
 		if err != nil { // io.EOF, readline.ErrInterrupt
+			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+				updatePrompt(rl)
+				continue
+			}
 			fmt.Println("\nExiting Goblin REPL.")
 			break
 		}
@@ -528,6 +562,9 @@ func main() {
 		// If not a command and in replace mode, replace the line content
 		isCommand := len(fields) > 0 && strings.HasPrefix(fields[0], ":")
 		if nextInputReplacesLine > 0 && !isCommand {
+			if codeLines[nextInputReplacesLine-1] != input {
+				bufferDirty = true
+			}
 			codeLines[nextInputReplacesLine-1] = input
 			fmt.Printf("Line %d updated.\n", nextInputReplacesLine)
 			nextInputReplacesLine = 0
@@ -545,12 +582,21 @@ func main() {
 		// --- Handle REPL Commands ---
 		switch cmd {
 		case ":quit", ":exit", ":bye", ":q":
+			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+				updatePrompt(rl)
+				continue
+			}
 			fmt.Println("Exiting Goblin REPL.")
 			return
 		case ":clear":
+			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+				updatePrompt(rl)
+				continue
+			}
 			codeLines = []string{}
 			currentSnippetName = ""
 			nextInputReplacesLine = 0 // Reset insert mode
+			bufferDirty = false
 			fmt.Println("Code buffer cleared.")
 			updatePrompt(rl)
 			continue
@@ -577,13 +623,19 @@ func main() {
 			continue
 		case ":save":
 			handleSave(strings.Join(codeLines, "\n"), args)
+			bufferDirty = false
 			if nextInputReplacesLine == 0 {
 				updatePrompt(rl)
 			}
 			continue
 		case ":load":
+			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+				updatePrompt(rl)
+				continue
+			}
 			handleLoad(&codeLines, args)
 			nextInputReplacesLine = 0 // Reset insert mode
+			bufferDirty = false
 			updatePrompt(rl)
 			continue
 		case ":export":
@@ -598,6 +650,7 @@ func main() {
 			continue
 		case ":edit":
 			handleEdit(&codeLines)
+			bufferDirty = true
 			if nextInputReplacesLine == 0 {
 				updatePrompt(rl)
 			}
@@ -615,6 +668,7 @@ func main() {
 			// Adjust for 0-based indexing
 			indexToInsert := lineNum - 1
 			codeLines = append(codeLines[:indexToInsert], append([]string{""}, codeLines[indexToInsert:]...)...)
+			bufferDirty = true
 			fmt.Printf("Empty line inserted at line %d. Enter code at the prompt.\n", lineNum)
 			nextInputReplacesLine = lineNum // Set state for next input
 			continue
@@ -628,6 +682,7 @@ func main() {
 				continue
 			}
 			handleSaveAs(strings.Join(codeLines, "\n"), args)
+			bufferDirty = false
 			updatePrompt(rl)
 			continue
 		case ":delete", ":d":
@@ -650,6 +705,7 @@ func main() {
 			// Adjust for 0-based indexing
 			indexToDelete := lineNum - 1
 			codeLines = append(codeLines[:indexToDelete], codeLines[indexToDelete+1:]...)
+			bufferDirty = true
 			fmt.Printf("Line %d deleted. Current buffer:\n", lineNum)
 			// Re-display the buffer with line numbers
 			if len(codeLines) == 0 {
@@ -672,6 +728,7 @@ func main() {
 		case ":undo", ":u":
 			if len(codeLines) > 0 {
 				codeLines = codeLines[:len(codeLines)-1]
+				bufferDirty = true
 				fmt.Println("Last entry removed.")
 			} else {
 				fmt.Println("Buffer is empty, nothing to undo.")
@@ -708,6 +765,7 @@ func main() {
 		default:
 			// --- Accumulate Code ---
 			codeLines = append(codeLines, input) // Use raw input to preserve indentation
+			bufferDirty = true
 			rl.SetPrompt(" -> ")                 // Change prompt for multi-line/subsequent input
 		}
 	}
