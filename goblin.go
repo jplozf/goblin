@@ -513,7 +513,7 @@ func main() {
 	fmt.Println(">  Enter Go statements and  :run  to  execute.  <")
 	fmt.Println(">  Use 'fmt.Println(...)' to display  results.  <")
 	fmt.Println(">  Use ':help' to see the available  commands.  <")
-	fmt.Println("+-----------------------------------------------+")
+	fmt.Println("+-----------------------------------------------+\n")
 
 	var codeLines []string
 	var nextInputReplacesLine = 0 // 0 means append, > 0 means replace line number
@@ -586,7 +586,7 @@ func main() {
 				updatePrompt(rl)
 				continue
 			}
-			fmt.Println("Exiting Goblin REPL.")
+			fmt.Printf("\n🐗Goblin v%s - https://github.com/jplozf/goblin\n", version.String())
 			return
 		case ":clear":
 			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
