@@ -3,7 +3,7 @@
 Goblin is a simple REPL for writing and testing small snippets in Go language.
 
 ```
------- Goblin REPL Wrapper (v0.10-0b1b2e0) ------
+------ Goblin REPL Wrapper (v0.10-ce7afb1) ------
 >  Enter Go statements and  :run  to  execute.  <
 >  Use 'fmt.Println(...)' to display  results.  <
 >  Use ':help' to see the available  commands.  <
