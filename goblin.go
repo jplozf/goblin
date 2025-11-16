@@ -446,7 +446,7 @@ func handleEdit(codeLines *[]string) {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		// Fallback to a common default if EDITOR is not set
-		editor = "vim"
+		editor = "nano"
 	}
 
 	// 4. Open the file in the editor
@@ -766,7 +766,7 @@ func main() {
 			// --- Accumulate Code ---
 			codeLines = append(codeLines, input) // Use raw input to preserve indentation
 			bufferDirty = true
-			rl.SetPrompt(" -> ")                 // Change prompt for multi-line/subsequent input
+			rl.SetPrompt(" -> ") // Change prompt for multi-line/subsequent input
 		}
 	}
 }
