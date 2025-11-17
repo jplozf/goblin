@@ -26,6 +26,7 @@ var (
 	successColor = color.New(color.FgGreen).SprintfFunc()
 	infoColor    = color.New(color.FgYellow).SprintfFunc()
 	outputColor  = color.New(color.FgCyan).SprintFunc()
+	snippetColor = color.New(color.FgMagenta).SprintFunc()
 )
 
 // REPL_SAVES_DIR is the directory where code snippets will be saved and loaded from.
@@ -594,7 +595,7 @@ func handleHelp() {
 
 func updatePrompt(rl *readline.Instance) {
 	if currentSnippetName != "" {
-		rl.SetPrompt(fmt.Sprintf("[%s]go> ", currentSnippetName))
+		rl.SetPrompt(fmt.Sprintf("[%s]go> ", snippetColor(currentSnippetName)))
 	} else {
 		rl.SetPrompt("go> ")
 	}
