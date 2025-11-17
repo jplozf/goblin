@@ -15,8 +15,17 @@ import (
 	"regexp"
 
 	"github.com/chzyer/readline"
+	"github.com/fatih/color"
 
 	"goblin.go/version"
+)
+
+// Color definitions
+var (
+	errorColor   = color.New(color.FgRed).SprintfFunc()
+	successColor = color.New(color.FgGreen).SprintfFunc()
+	infoColor    = color.New(color.FgYellow).SprintfFunc()
+	outputColor  = color.New(color.FgCyan).SprintFunc()
 )
 
 // REPL_SAVES_DIR is the directory where code snippets will be saved and loaded from.
@@ -41,10 +50,10 @@ func promptToSave(rl *readline.Instance, code string) bool {
 		return true // Not dirty, proceed
 	}
 
-	rl.SetPrompt("Current snippet has unsaved changes. Save now? (y/n) ")
+	rl.SetPrompt(infoColor("Current snippet has unsaved changes. Save now? (y/n) "))
 	answer, err := rl.Readline()
 	if err != nil {
-		fmt.Println("\nOperation cancelled.")
+		fmt.Println(errorColor("\nOperation cancelled."))
 		return false // Error reading line, cancel action
 	}
 
@@ -56,7 +65,7 @@ func promptToSave(rl *readline.Instance, code string) bool {
 		return true // Proceed without saving
 	}
 
-	fmt.Println("Invalid input. Operation cancelled.")
+	fmt.Println(errorColor("Invalid input. Operation cancelled."))
 	return false // Invalid input, cancel action
 }
 
@@ -64,12 +73,12 @@ func promptToSave(rl *readline.Instance, code string) bool {
 func initConfig() {
 	// Create the main ~/.goblin directory
 	if err := os.MkdirAll(filepath.Dir(REPL_SAVES_DIR), 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
+		color.New(color.FgRed).Fprintf(os.Stderr, "Error creating config directory: %v\n", err)
 		os.Exit(1)
 	}
 	// Create the snippets subdirectory
 	if err := os.MkdirAll(REPL_SAVES_DIR, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating snippets directory: %v\n", err)
+		color.New(color.FgRed).Fprintf(os.Stderr, "Error creating snippets directory: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -233,19 +242,19 @@ func executeCode(code string) (string, error) {
 
 // handleList lists all saved files in the REPL_SAVES_DIR.
 func handleList() {
-	fmt.Println("--- Saved Snippets ---")
+	fmt.Println(infoColor("--- Saved Snippets ---"))
 	files, err := ioutil.ReadDir(REPL_SAVES_DIR)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("Save directory '%s' does not exist yet.\n", REPL_SAVES_DIR)
+			fmt.Println(infoColor("Save directory '%s' does not exist yet.", REPL_SAVES_DIR))
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Error listing files: %v\n", err)
+		fmt.Fprintln(os.Stderr, errorColor("Error listing files: %v", err))
 		return
 	}
 
 	if len(files) == 0 {
-		fmt.Println("No saved files found.")
+		fmt.Println(infoColor("No saved files found."))
 		return
 	}
 
@@ -254,7 +263,7 @@ func handleList() {
 			fmt.Printf("> %s (%d bytes)\n", file.Name(), file.Size())
 		}
 	}
-	fmt.Println("----------------------")
+	fmt.Println(infoColor("----------------------"))
 }
 
 // ensureGoExtension checks if the filename has a .go extension and adds it if missing.
@@ -272,14 +281,14 @@ func handleSave(code string, args []string) {
 	if len(args) == 0 {
 		if currentSnippetName != "" {
 			filename = ensureGoExtension(currentSnippetName)
-			fmt.Printf("No filename provided. Saving to current snippet: '%s'\n", filename)
+			fmt.Println(infoColor("No filename provided. Saving to current snippet: '%s'", filename))
 		} else if lastLoadedFilePath != "" {
 			filename = ensureGoExtension(filepath.Base(lastLoadedFilePath))
-			fmt.Printf("No filename provided. Saving to last loaded file: '%s'\n", filename)
+			fmt.Println(infoColor("No filename provided. Saving to last loaded file: '%s'", filename))
 		} else {
 			// Generate a random filename based on timestamp
 			filename = fmt.Sprintf("snippet_%s.go", time.Now().Format("20060102_150405"))
-			fmt.Printf("No filename provided and no previous file loaded. Saving to new file: '%s'\n", filename)
+			fmt.Println(infoColor("No filename provided and no previous file loaded. Saving to new file: '%s'", filename))
 		}
 	} else if len(args) >= 1 {
 		filename = ensureGoExtension(strings.Join(args, " "))
@@ -290,17 +299,17 @@ func handleSave(code string, args []string) {
 	// 1. Write the code to the file
 	filePath := filepath.Join(REPL_SAVES_DIR, filename)
 	if err := ioutil.WriteFile(filePath, []byte(code), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving code to '%s': %v\n", filename, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error saving code to '%s': %v", filename, err))
 		return
 	}
 
-	fmt.Printf("Code successfully saved to '%s'.\n", filePath)
+	fmt.Println(successColor("Code successfully saved to '%s'.", filePath))
 }
 
 // handleLoad loads the specified filename into the current code buffer.
 func handleLoad(codeLines *[]string, args []string) {
 	if len(args) != 1 {
-		fmt.Println("Usage: :load <filename>")
+		fmt.Println(infoColor("Usage: :load <filename>"))
 		return
 	}
 	filename := ensureGoExtension(args[0])
@@ -308,7 +317,7 @@ func handleLoad(codeLines *[]string, args []string) {
 
 	data, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading file '%s': %v\n", filename, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error loading file '%s': %v", filename, err))
 		return
 	}
 
@@ -318,7 +327,7 @@ func handleLoad(codeLines *[]string, args []string) {
 	lastLoadedFilePath = filePath // Store the last loaded file path
 	currentSnippetName = strings.TrimSuffix(filepath.Base(filePath), ".go")
 
-	fmt.Printf("Code successfully loaded from '%s'. Buffer reset and updated.\n", filePath)
+	fmt.Println(successColor("Code successfully loaded from '%s'. Buffer reset and updated.", filePath))
 }
 
 // handleExport exports the current code buffer to a full Go source file.
@@ -329,16 +338,16 @@ func handleExport(code string, args []string) {
 		filename := ""
 		if lastLoadedFilePath != "" {
 			filename = ensureGoExtension(filepath.Base(lastLoadedFilePath))
-			fmt.Printf("No filename provided. Exporting to last loaded file name: '%s' in home directory.\n", filename)
+			fmt.Println(infoColor("No filename provided. Exporting to last loaded file name: '%s' in home directory.", filename))
 		} else {
 			filename = fmt.Sprintf("snippet_%s.go", time.Now().Format("20060102_150405"))
-			fmt.Printf("No filename provided and no previous file loaded. Exporting to new file: '%s' in home directory.\n", filename)
+			fmt.Println(infoColor("No filename provided and no previous file loaded. Exporting to new file: '%s' in home directory.", filename))
 		}
 		outputPath = filepath.Join(os.Getenv("HOME"), filename)
 	} else if len(args) >= 1 {
 		outputPath = ensureGoExtension(strings.Join(args, " "))
 	} else {
-		fmt.Println("Usage: :export [<filepath>]")
+		fmt.Println(infoColor("Usage: :export [<filepath>]"))
 		return
 	}
 
@@ -351,24 +360,24 @@ func handleExport(code string, args []string) {
 	// Ensure the directory exists
 	dir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating directory '%s': %v\n", dir, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error creating directory '%s': %v", dir, err))
 		return
 	}
 
 	// Write the code to the file
 	if err := ioutil.WriteFile(outputPath, []byte(fullCode), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error exporting code to '%s': %v\n", outputPath, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error exporting code to '%s': %v", outputPath, err))
 		return
 	}
 
-	fmt.Printf("Code successfully exported to '%s'.\n", outputPath)
+	fmt.Println(successColor("Code successfully exported to '%s'.", outputPath))
 }
 
 // handleSaveAs saves the current code buffer to a new file with the specified name,
 // and then sets this new file as the currently active snippet.
 func handleSaveAs(code string, args []string) {
 	if len(args) != 1 {
-		fmt.Println("Usage: :saveas <new_filename>")
+		fmt.Println(infoColor("Usage: :saveas <new_filename>"))
 		return
 	}
 
@@ -377,13 +386,13 @@ func handleSaveAs(code string, args []string) {
 
 	// Check if the new file name already exists
 	if _, err := os.Stat(newFilePath); err == nil {
-		fmt.Fprintf(os.Stderr, "Error: A snippet named '%s' already exists. Choose a different name.\n", newFilename)
+		fmt.Fprintln(os.Stderr, errorColor("Error: A snippet named '%s' already exists. Choose a different name.", newFilename))
 		return
 	}
 
 	// Write the current code to the new file
 	if err := ioutil.WriteFile(newFilePath, []byte(code), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error saving code to '%s': %v\n", newFilename, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error saving code to '%s': %v", newFilename, err))
 		return
 	}
 
@@ -391,18 +400,18 @@ func handleSaveAs(code string, args []string) {
 	lastLoadedFilePath = newFilePath
 	currentSnippetName = strings.TrimSuffix(newFilename, ".go")
 
-	fmt.Printf("Code successfully saved as '%s'. Current snippet is now '%s'.\n", newFilename, currentSnippetName)
+	fmt.Println(successColor("Code successfully saved as '%s'. Current snippet is now '%s'.", newFilename, currentSnippetName))
 }
 
 // handleRename renames the current code buffer's associated file.
 func handleRename(args []string) {
 	if len(args) != 1 {
-		fmt.Println("Usage: :rename <new_filename>")
+		fmt.Println(infoColor("Usage: :rename <new_filename>"))
 		return
 	}
 
 	if lastLoadedFilePath == "" {
-		fmt.Println("No snippet is currently loaded or saved to rename. Use :save first.")
+		fmt.Println(infoColor("No snippet is currently loaded or saved to rename. Use :save first."))
 		return
 	}
 
@@ -412,18 +421,18 @@ func handleRename(args []string) {
 
 	// Check if the new file name already exists
 	if _, err := os.Stat(newFilePath); err == nil {
-		fmt.Fprintf(os.Stderr, "Error: A snippet named '%s' already exists. Choose a different name.\n", newFilename)
+		fmt.Fprintln(os.Stderr, errorColor("Error: A snippet named '%s' already exists. Choose a different name.", newFilename))
 		return
 	}
 
 	if err := os.Rename(oldFilePath, newFilePath); err != nil {
-		fmt.Fprintf(os.Stderr, "Error renaming snippet from '%s' to '%s': %v\n", filepath.Base(oldFilePath), newFilename, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error renaming snippet from '%s' to '%s': %v", filepath.Base(oldFilePath), newFilename, err))
 		return
 	}
 
 	lastLoadedFilePath = newFilePath
 	currentSnippetName = strings.TrimSuffix(newFilename, ".go")
-	fmt.Printf("Snippet successfully renamed to '%s'.\n", newFilename)
+	fmt.Println(successColor("Snippet successfully renamed to '%s'.", newFilename))
 }
 
 // handleTidy formats the current code buffer using go/format.
@@ -511,18 +520,18 @@ func handleEdit(codeLines *[]string) {
 	// 1. Create a temporary file with a .go extension
 	tmpfile, err := ioutil.TempFile("", "goblin-*.go")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating temporary file: %v\n", err)
+		fmt.Fprintln(os.Stderr, errorColor("Error creating temporary file: %v", err))
 		return
 	}
 	defer os.Remove(tmpfile.Name()) // Clean up the file afterwards
 
 	// 2. Write the current buffer to the temporary file
 	if _, err := tmpfile.WriteString(strings.Join(*codeLines, "\n")); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing to temporary file: %v\n", err)
+		fmt.Fprintln(os.Stderr, errorColor("Error writing to temporary file: %v", err))
 		return
 	}
 	if err := tmpfile.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error closing temporary file: %v\n", err)
+		fmt.Fprintln(os.Stderr, errorColor("Error closing temporary file: %v", err))
 		return
 	}
 
@@ -540,21 +549,21 @@ func handleEdit(codeLines *[]string) {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening editor '%s': %v\n", editor, err)
+		fmt.Fprintln(os.Stderr, errorColor("Error opening editor '%s': %v", editor, err))
 		return
 	}
 
 	// 5. Read the modified content back into the buffer
 	data, err := ioutil.ReadFile(tmpfile.Name())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading modified file: %v\n", err)
+		fmt.Fprintln(os.Stderr, errorColor("Error reading modified file: %v", err))
 		return
 	}
 
 	// 6. Reset the buffer and write the new content
 	*codeLines = strings.Split(string(data), "\n")
 
-	fmt.Println("Buffer updated from editor.")
+	fmt.Println(successColor("Buffer updated from editor."))
 
 }
 
@@ -562,7 +571,7 @@ func handleEdit(codeLines *[]string) {
 
 func handleHelp() {
 
-	fmt.Printf("\n------ Goblin REPL Commands (v%s)\n", version.String())
+	fmt.Println(infoColor("\n------ Goblin REPL Commands (v%s) ------", version.String()))
 	fmt.Println(":run                  - Execute the current Go code in the buffer.")
 	fmt.Println(":clear                - Clear the current code buffer.")
 	fmt.Println(":show                 - Display the current content of the code buffer.")
@@ -579,7 +588,7 @@ func handleHelp() {
 	fmt.Println(":i(nsert) <line>      - Insert an empty line before the provided line number.")
 	fmt.Println(":help                 - Display this help message.")
 	fmt.Println(":q(uit), :exit, :bye  - Exit the REPL.")
-	fmt.Println("--------------------------------------------------------------------------------------------")
+	fmt.Println(infoColor("--------------------------------------------------------------------------------------------"))
 
 }
 
@@ -594,11 +603,12 @@ func updatePrompt(rl *readline.Instance) {
 func main() {
 	initConfig() // Ensure ~/.goblin exists
 
-	fmt.Printf("+----- Goblin REPL Wrapper (v%s) -----+\n", version.String())
-	fmt.Println(">  Enter Go statements and  :run  to  execute.  <")
-	fmt.Println(">  Use 'fmt.Println(...)' to display  results.  <")
-	fmt.Println(">  Use ':help' to see the available  commands.  <")
-	fmt.Println("+-----------------------------------------------+\n")
+	fmt.Println(infoColor("+----- Goblin REPL Wrapper (v%s) -----+", version.String()))
+	fmt.Println(infoColor(">  Enter Go statements and  :run  to  execute.  <"))
+	fmt.Println(infoColor(">  Use 'fmt.Println(...)' to display  results.  <"))
+	fmt.Println(infoColor(">  Use ':help' to see the available  commands.  <"))
+	fmt.Println(infoColor("+-----------------------------------------------+"))
+	fmt.Println()
 
 	var codeLines []string
 	var nextInputReplacesLine = 0 // 0 means append, > 0 means replace line number
@@ -629,7 +639,7 @@ func main() {
 				updatePrompt(rl)
 				continue
 			}
-			fmt.Println("\nExiting Goblin REPL.")
+			fmt.Println(infoColor("\nExiting Goblin REPL."))
 			break
 		}
 
@@ -671,7 +681,7 @@ func main() {
 				updatePrompt(rl)
 				continue
 			}
-			fmt.Printf("\n🐗Goblin v%s - https://github.com/jplozf/goblin\n", version.String())
+			fmt.Println(infoColor("\n🐗Goblin v%s - https://github.com/jplozf/goblin", version.String()))
 			return
 		case ":clear":
 			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
@@ -683,18 +693,18 @@ func main() {
 			lastLoadedFilePath = "" // Reset the last loaded file path
 			nextInputReplacesLine = 0 // Reset insert mode
 			bufferDirty = false
-			fmt.Println("Code buffer cleared.")
+			fmt.Println(infoColor("Code buffer cleared."))
 			updatePrompt(rl)
 			continue
 		case ":show":
 			if len(codeLines) == 0 {
-				fmt.Println("Code buffer is empty.")
+				fmt.Println(infoColor("Code buffer is empty."))
 			} else {
-				fmt.Println("\n--- Current Code Buffer ---")
+				fmt.Println(infoColor("\n--- Current Code Buffer ---"))
 				for i, line := range codeLines {
 					fmt.Printf("%4d: %s\n", i+1, line)
 				}
-				fmt.Println("---------------------------\n")
+				fmt.Println(infoColor("---------------------------"))
 			}
 			// Do not reset prompt if in insert mode
 			if nextInputReplacesLine == 0 {
@@ -726,7 +736,7 @@ func main() {
 			continue
 		case ":export":
 			if len(codeLines) == 0 {
-				fmt.Println("No code in buffer to export.")
+				fmt.Println(infoColor("No code in buffer to export."))
 				continue
 			}
 			handleExport(strings.Join(codeLines, "\n"), args)
@@ -743,19 +753,19 @@ func main() {
 			continue
 		case ":insert", ":i":
 			if len(args) != 1 {
-				fmt.Println("Usage: :insert <line_number>")
+				fmt.Println(infoColor("Usage: :insert <line_number>"))
 				continue
 			}
 			lineNum, err := strconv.Atoi(args[0])
 			if err != nil || lineNum < 1 || lineNum > len(codeLines)+1 {
-				fmt.Printf("Invalid line number: %s. Please provide a number between 1 and %d.\n", args[0], len(codeLines)+1)
+				fmt.Fprintln(os.Stderr, errorColor("Invalid line number: %s. Please provide a number between 1 and %d.", args[0], len(codeLines)+1))
 				continue
 			}
 			// Adjust for 0-based indexing
 			indexToInsert := lineNum - 1
 			codeLines = append(codeLines[:indexToInsert], append([]string{""}, codeLines[indexToInsert:]...)...)
 			bufferDirty = true
-			fmt.Printf("Empty line inserted at line %d. Enter code at the prompt.\n", lineNum)
+			fmt.Println(successColor("Empty line inserted at line %d. Enter code at the prompt.", lineNum))
 			nextInputReplacesLine = lineNum // Set state for next input
 			continue
 		case ":rename":
@@ -764,7 +774,7 @@ func main() {
 			continue
 		case ":saveas":
 			if len(codeLines) == 0 {
-				fmt.Println("No code in buffer to save.")
+				fmt.Println(infoColor("No code in buffer to save."))
 				continue
 			}
 			handleSaveAs(strings.Join(codeLines, "\n"), args)
@@ -773,18 +783,18 @@ func main() {
 			continue
 		case ":delete", ":d":
 			if len(args) != 1 {
-				fmt.Println("Usage: :delete <line_number>")
+				fmt.Println(infoColor("Usage: :delete <line_number>"))
 				continue
 			}
 			lineNum, err := strconv.Atoi(args[0])
 			if err != nil || lineNum < 1 || lineNum > len(codeLines) {
-				fmt.Printf("Invalid line number: %s. Please provide a number between 1 and %d.\n", args[0], len(codeLines))
+				fmt.Fprintln(os.Stderr, errorColor("Invalid line number: %s. Please provide a number between 1 and %d.", args[0], len(codeLines)))
 				continue
 			}
 
 			// Cancel insert mode if it's affected
 			if nextInputReplacesLine > 0 {
-				fmt.Println("Insert mode cancelled.")
+				fmt.Println(infoColor("Insert mode cancelled."))
 				nextInputReplacesLine = 0
 			}
 
@@ -792,16 +802,16 @@ func main() {
 			indexToDelete := lineNum - 1
 			codeLines = append(codeLines[:indexToDelete], codeLines[indexToDelete+1:]...)
 			bufferDirty = true
-			fmt.Printf("Line %d deleted. Current buffer:\n", lineNum)
+			fmt.Println(successColor("Line %d deleted. Current buffer:", lineNum))
 			// Re-display the buffer with line numbers
 			if len(codeLines) == 0 {
-				fmt.Println("Code buffer is empty.")
+				fmt.Println(infoColor("Code buffer is empty."))
 			} else {
-				fmt.Println("\n--- Current Code Buffer ---")
+				fmt.Println(infoColor("\n--- Current Code Buffer ---"))
 				for i, line := range codeLines {
 					fmt.Printf("%4d: %s\n", i+1, line)
 				}
-				fmt.Println("---------------------------\n")
+				fmt.Println(infoColor("---------------------------"))
 			}
 			updatePrompt(rl)
 			continue
@@ -815,9 +825,9 @@ func main() {
 			if len(codeLines) > 0 {
 				codeLines = codeLines[:len(codeLines)-1]
 				bufferDirty = true
-				fmt.Println("Last entry removed.")
+				fmt.Println(successColor("Last entry removed."))
 			} else {
-				fmt.Println("Buffer is empty, nothing to undo.")
+				fmt.Println(infoColor("Buffer is empty, nothing to undo."))
 			}
 			if nextInputReplacesLine == 0 {
 				updatePrompt(rl)
@@ -825,26 +835,26 @@ func main() {
 			continue
 		case ":tidy":
 			if len(codeLines) == 0 {
-				fmt.Println("No code in buffer to tidy.")
+				fmt.Println(infoColor("No code in buffer to tidy."))
 				continue
 			}
 			tidiedLines, err := handleTidy(strings.Join(codeLines, "\n"))
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error tidying code: %v\n", err)
+				fmt.Fprintln(os.Stderr, errorColor("Error tidying code: %v", err))
 				continue
 			}
 			codeLines = tidiedLines
 			bufferDirty = true
-			fmt.Println("Code buffer tidied.")
+			fmt.Println(successColor("Code buffer tidied."))
 			// Re-display the buffer with line numbers
 			if len(codeLines) == 0 {
-				fmt.Println("Code buffer is empty.")
+				fmt.Println(infoColor("Code buffer is empty."))
 			} else {
-				fmt.Println("\n--- Current Code Buffer ---")
+				fmt.Println(infoColor("\n--- Current Code Buffer ---"))
 				for i, line := range codeLines {
 					fmt.Printf("%4d: %s\n", i+1, line)
 				}
-				fmt.Println("---------------------------\n")
+				fmt.Println(infoColor("---------------------------"))
 			}
 			updatePrompt(rl)
 			continue
@@ -861,14 +871,14 @@ func main() {
 
 			output, execErr := executeCode(strings.Join(codeLines, "\n"))
 
-			fmt.Println("--- Output ---")
-			fmt.Print(output)
-			fmt.Println("--------------")
+			fmt.Println(infoColor("--- Output ---"))
+			fmt.Print(outputColor(output))
+			fmt.Println(infoColor("--------------"))
 
 			if execErr != nil {
-				fmt.Fprintf(os.Stderr, "Code Execution Finished with Error Status.\n")
+				fmt.Fprintln(os.Stderr, errorColor("Code Execution Finished with Error Status."))
 			} else {
-				fmt.Println("Code Execution Successful.")
+				fmt.Println(successColor("Code Execution Successful."))
 			}
 
 			updatePrompt(rl)
