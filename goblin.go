@@ -203,7 +203,7 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 
 // executeCode takes the accumulated user code, separates declarations from statements,
 // wraps them in the template, writes to a temporary file, and executes it.
-func executeCode(code string) (string, error) {
+func executeCode(code string, args []string) (string, error) {
 	userImports, topLevelDeclarations, statements := separateCodeParts(code)
 
 	// 1. Fill the template with the separated code
@@ -224,7 +224,8 @@ func executeCode(code string) (string, error) {
 	}
 
 	// 4. Execute the code using 'go run'
-	cmd := exec.Command("go", "run", tmpFilePath)
+	cmdArgs := append([]string{"run", tmpFilePath}, args...)
+	cmd := exec.Command("go", cmdArgs...)
 
 	// We keep GOWORK=off to prevent conflicts with Go Workspaces.
 	cmd.Env = append(os.Environ(), "GOWORK=off")
@@ -573,7 +574,7 @@ func handleEdit(codeLines *[]string) {
 func handleHelp() {
 
 	fmt.Println(infoColor("\n------ Goblin REPL Commands (v%s) ------", version.String()))
-	fmt.Println(":run                  - Execute the current Go code in the buffer.")
+	fmt.Println(":run [args...]        - Execute the current Go code in the buffer with optional arguments.")
 	fmt.Println(":clear                - Clear the current code buffer.")
 	fmt.Println(":show                 - Display the current content of the code buffer.")
 	fmt.Println(":tidy                 - Format the code in the buffer.")
@@ -870,7 +871,7 @@ func main() {
 				continue
 			}
 
-			output, execErr := executeCode(strings.Join(codeLines, "\n"))
+			output, execErr := executeCode(strings.Join(codeLines, "\n"), args)
 
 			fmt.Println(infoColor("--- Output ---"))
 			fmt.Print(outputColor(output))
