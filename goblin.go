@@ -20,6 +20,15 @@ import (
 	"goblin.go/version"
 )
 
+// getGoVersion returns the Go version string.
+func getGoVersion() string {
+	out, err := exec.Command("go", "version").Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // Color definitions
 var (
 	errorColor   = color.New(color.FgRed).SprintfFunc()
@@ -573,7 +582,7 @@ func handleEdit(codeLines *[]string) {
 
 func handleHelp() {
 
-	fmt.Println(infoColor("\n------ Goblin REPL Commands (v%s) ------", version.String()))
+	fmt.Println(infoColor("\nGoblin %s - Commands summary :", version.String()))
 	fmt.Println(":run [args...]        - Execute the current Go code in the buffer with optional arguments.")
 	fmt.Println(":clear                - Clear the current code buffer.")
 	fmt.Println(":show                 - Display the current content of the code buffer.")
@@ -590,8 +599,7 @@ func handleHelp() {
 	fmt.Println(":i(nsert) <line>      - Insert an empty line before the provided line number.")
 	fmt.Println(":help                 - Display this help message.")
 	fmt.Println(":q(uit), :exit, :bye  - Exit the REPL.")
-	fmt.Println(infoColor("--------------------------------------------------------------------------------------------"))
-
+	fmt.Println()
 }
 
 func updatePrompt(rl *readline.Instance) {
@@ -605,11 +613,11 @@ func updatePrompt(rl *readline.Instance) {
 func main() {
 	initConfig() // Ensure ~/.goblin exists
 
-	fmt.Println(infoColor("+----- Goblin REPL Wrapper (v%s) -----+", version.String()))
-	fmt.Println(infoColor(">  Enter Go statements and  :run  to  execute.  <"))
-	fmt.Println(infoColor(">  Use 'fmt.Println(...)' to display  results.  <"))
-	fmt.Println(infoColor(">  Use ':help' to see the available  commands.  <"))
-	fmt.Println(infoColor("+-----------------------------------------------+"))
+	fmt.Println(infoColor("Goblin %s - An enhanced REPL for Go.", version.String()))
+	fmt.Println(infoColor("%s", getGoVersion()))
+	fmt.Println(infoColor("Enter Go statements and type ':run' to execute."))
+	fmt.Println(infoColor("Type 'fmt.Println(...)' to display results."))
+	fmt.Println(infoColor("Type ':help' to see the available commands."))
 	fmt.Println()
 
 	var codeLines []string
@@ -683,7 +691,7 @@ func main() {
 				updatePrompt(rl)
 				continue
 			}
-			fmt.Println(infoColor("\n🐗Goblin v%s - https://github.com/jplozf/goblin", version.String()))
+			fmt.Println(infoColor("\n🐗 Goblin %s - https://github.com/jplozf/goblin", version.String()))
 			return
 		case ":clear":
 			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
