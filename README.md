@@ -3,17 +3,19 @@
 Goblin is a simple REPL for writing and testing small snippets in Go language.
 
 ```
-+----- Goblin REPL Wrapper (v0.11-e9a9912) -----+
->  Enter Go statements and  :run  to  execute.  <
->  Use 'fmt.Println(...)' to display  results.  <
->  Use ':help' to see the available  commands.  <
-+-----------------------------------------------+
+🐗 Goblin 0.19-8f4ef34 - An enhanced REPL for Go.
+go version go1.25.4 X:nodwarf5 linux/amd64
+Enter Go statements and type ':run' to execute.
+Type 'fmt.Println(...)' to display results.
+Type ':help' to see the available commands.
+
 go> :help
 
------- Goblin REPL Commands (v0.11-e9a9912)
-:run                  - Execute the current Go code in the buffer.
+🐗 Goblin 0.19-8f4ef34 - Commands summary :
+:run [args...]        - Execute the current Go code in the buffer with optional arguments.
 :clear                - Clear the current code buffer.
 :show                 - Display the current content of the code buffer.
+:tidy                 - Format the code in the buffer.
 :list                 - List all saved code snippets.
 :save <file>          - Save the current code buffer to a file.
 :saveas <file>        - Save the current buffer to a new file and make it the active snippet.
@@ -26,22 +28,33 @@ go> :help
 :i(nsert) <line>      - Insert an empty line before the provided line number.
 :help                 - Display this help message.
 :q(uit), :exit, :bye  - Exit the REPL.
---------------------------------------------------------------------------------------------
-go> import "math"
- -> fmt.Println(math.Pi)
- -> :show
+
+go> :list
+--- Saved Snippets ---
+> hello.go (72 bytes)
+> nbJours.go (592 bytes)
+> new01.go (36 bytes)
+> new02.go (34 bytes)
+> snippet_20251116_214840.go (29 bytes)
+> test.go (13 bytes)
+----------------------
+go> :load hello
+Code successfully loaded from '/home/jpl/.goblin/snippets/hello.go'. Buffer reset and updated.
+[hello]go> :show
 
 --- Current Code Buffer ---
-   1: import "math"
-   2: fmt.Println(math.Pi)
+   1: import "os"
+   2: import "math"
+   3: fmt.Println(len(os.Args))
+   4: fmt.Println(math.Pi)
 ---------------------------
-
-go> :run
+[hello]go> :run
 --- Output ---
+1
 3.141592653589793
 --------------
 Code Execution Successful.
-go>
+[hello]go> 
 ```
 
 ## License
