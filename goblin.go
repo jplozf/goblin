@@ -604,7 +604,11 @@ func handleHelp() {
 
 func updatePrompt(rl *readline.Instance) {
 	if currentSnippetName != "" {
-		rl.SetPrompt(fmt.Sprintf("[%s]go> ", snippetColor(currentSnippetName)))
+		dirtyIndicator := ""
+		if bufferDirty {
+			dirtyIndicator = "*"
+		}
+		rl.SetPrompt(fmt.Sprintf("[%s%s]go> ", snippetColor(currentSnippetName), dirtyIndicator))
 	} else {
 		rl.SetPrompt("go> ")
 	}
