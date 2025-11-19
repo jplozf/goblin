@@ -582,7 +582,7 @@ func handleEdit(codeLines *[]string) {
 
 func handleHelp() {
 
-	fmt.Println(infoColor("\nGoblin %s - Commands summary :", version.String()))
+	fmt.Println(infoColor("\n🐗 Goblin %s - Commands summary :", version.String()))
 	fmt.Println(":run [args...]        - Execute the current Go code in the buffer with optional arguments.")
 	fmt.Println(":clear                - Clear the current code buffer.")
 	fmt.Println(":show                 - Display the current content of the code buffer.")
@@ -617,7 +617,7 @@ func updatePrompt(rl *readline.Instance) {
 func main() {
 	initConfig() // Ensure ~/.goblin exists
 
-	fmt.Println(infoColor("Goblin %s - An enhanced REPL for Go.", version.String()))
+	fmt.Println(infoColor("🐗 Goblin %s - An enhanced REPL for Go.", version.String()))
 	fmt.Println(infoColor("%s", getGoVersion()))
 	fmt.Println(infoColor("Enter Go statements and type ':run' to execute."))
 	fmt.Println(infoColor("Type 'fmt.Println(...)' to display results."))
@@ -704,7 +704,7 @@ func main() {
 			}
 			codeLines = []string{}
 			currentSnippetName = ""
-			lastLoadedFilePath = "" // Reset the last loaded file path
+			lastLoadedFilePath = ""   // Reset the last loaded file path
 			nextInputReplacesLine = 0 // Reset insert mode
 			bufferDirty = false
 			fmt.Println(infoColor("Code buffer cleared."))
