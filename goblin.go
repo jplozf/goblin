@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"go/format"
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"strconv"
@@ -578,12 +582,100 @@ func handleEdit(codeLines *[]string) {
 
 }
 
+// handleSys executes a system command with real-time output,
+// allowing interruption with CTRL+C without killing the main REPL process.
+func handleSys(args []string) {
+	if len(args) == 0 {
+		fmt.Println(infoColor("Usage: :sys <command> [args...]"))
+		return
+	}
+
+	// --- Command Setup ---
+	cmd := exec.Command(args[0], args[1:]...)
+	// Create a new process group for the command. This is essential for signal handling.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// Get pipes for stdout and stderr to stream output in real-time.
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, errorColor("Error creating stdout pipe: %v", err))
+		return
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, errorColor("Error creating stderr pipe: %v", err))
+		return
+	}
+
+	// --- Start Command ---
+	if err := cmd.Start(); err != nil {
+		fmt.Fprintln(os.Stderr, errorColor("Error starting command: %v", err))
+		return
+	}
+
+	// --- Goroutines for Real-time Output Streaming ---
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdoutPipe)
+		for scanner.Scan() {
+			fmt.Println(successColor(scanner.Text()))
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			fmt.Fprintln(os.Stderr, errorColor(scanner.Text()))
+		}
+	}()
+
+	// --- Signal Handling and Waiting ---
+	// Set up a channel to catch SIGINT (CTRL+C).
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT)
+
+	// Set up a channel to signal when the command has completed.
+	cmdDone := make(chan error, 1)
+	go func() {
+		cmdDone <- cmd.Wait()
+	}()
+
+	// --- Main Event Loop ---
+	select {
+	case err := <-cmdDone:
+		// Command finished on its own.
+		if err != nil {
+			// This will report errors like non-zero exit statuses.
+			// It is generally expected and can be ignored if not needed.
+		}
+	case <-sigChan:
+		// CTRL+C was pressed. Send SIGINT to the entire process group of the command.
+		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT); err != nil {
+			fmt.Fprintln(os.Stderr, errorColor("Failed to interrupt command: %v", err))
+		}
+		// Wait for the command to actually finish after being signaled.
+		<-cmdDone
+	}
+
+	// Stop listening for our signals and clean up.
+	signal.Stop(sigChan)
+	close(sigChan)
+
+	// Wait for the output streaming goroutines to finish to ensure all output is flushed.
+	wg.Wait()
+}
+
 // handleHelp displays a list of available commands.
 
 func handleHelp() {
 
 	fmt.Println(infoColor("\n🐗 Goblin %s - Commands summary :", version.String()))
 	fmt.Println(":run [args...]        - Execute the current Go code in the buffer with optional arguments.")
+	fmt.Println(":sys <command> [args...] - Execute a system command.")
 	fmt.Println(":clear                - Clear the current code buffer.")
 	fmt.Println(":show                 - Display the current content of the code buffer.")
 	fmt.Println(":tidy                 - Format the code in the buffer.")
@@ -629,14 +721,14 @@ func main() {
 	currentSnippetName = ""
 	bufferDirty = false
 
-	rl, err := readline.NewEx(&readline.Config{
+	rlConfig := &readline.Config{
 		Prompt:      "go> ",
 		HistoryFile: HISTORY_FILE,
-	})
+	}
+	rl, err := readline.NewEx(rlConfig)
 	if err != nil {
 		panic(err)
 	}
-	defer rl.Close()
 
 	updatePrompt(rl)
 
@@ -654,6 +746,7 @@ func main() {
 				continue
 			}
 			fmt.Println(infoColor("\nExiting Goblin REPL."))
+			rl.Close()
 			break
 		}
 
@@ -696,6 +789,7 @@ func main() {
 				continue
 			}
 			fmt.Println(infoColor("\n🐗 Goblin %s - https://github.com/jplozf/goblin", version.String()))
+			rl.Close()
 			return
 		case ":clear":
 			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
@@ -895,6 +989,10 @@ func main() {
 				fmt.Println(successColor("Code Execution Successful."))
 			}
 
+			updatePrompt(rl)
+			continue
+		case ":sys":
+			handleSys(args)
 			updatePrompt(rl)
 			continue
 		default:
