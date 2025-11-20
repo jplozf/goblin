@@ -4,15 +4,16 @@ import (
 	"bufio"
 	"fmt"
 	"go/format"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"strconv"
 
@@ -20,9 +21,12 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
+	"golang.org/x/term"
 
 	"goblin.go/version"
 )
+
+var originalTerminalState *term.State
 
 // getGoVersion returns the Go version string.
 func getGoVersion() string {
@@ -583,11 +587,18 @@ func handleEdit(codeLines *[]string) {
 }
 
 // handleSys executes a system command with real-time output,
-// allowing interruption with CTRL+C without killing the main REPL process.
-func handleSys(args []string) {
+// allowing interruption with the Escape key without killing the main REPL process.
+func handleSys(args []string, rl *readline.Instance) (error, bool) {
+	// Clear readline's buffer before going into raw mode
+	rl.Clean()
+
+	// Set raw mode for capturing individual key presses
+	if err := setRawMode(); err != nil {
+		return fmt.Errorf("Failed to set raw terminal mode: %w", err), true // Reinit readline on failure
+	}
+
 	if len(args) == 0 {
-		fmt.Println(infoColor("Usage: :sys <command> [args...]"))
-		return
+		return fmt.Errorf("Usage: :sys <command> [args...] "), false
 	}
 
 	// --- Command Setup ---
@@ -598,20 +609,24 @@ func handleSys(args []string) {
 	// Get pipes for stdout and stderr to stream output in real-time.
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, errorColor("Error creating stdout pipe: %v", err))
-		return
+		return fmt.Errorf("Error creating stdout pipe: %w", err), true // Reinit readline on failure
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, errorColor("Error creating stderr pipe: %v", err))
-		return
+		return fmt.Errorf("Error creating stderr pipe: %w", err), true // Reinit readline on failure
 	}
 
 	// --- Start Command ---
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(os.Stderr, errorColor("Error starting command: %v", err))
-		return
+		return fmt.Errorf("Error starting command: %w", err), true // Reinit readline on failure
 	}
+
+	// Channels for key press listener
+	escapePressedChan := make(chan struct{}, 1)
+	stopKeyListenerChan := make(chan struct{}, 1)
+	keyListenerStoppedChan := make(chan struct{}, 1)
+
+	go keyPressListener(escapePressedChan, stopKeyListenerChan, keyListenerStoppedChan)
 
 	// --- Goroutines for Real-time Output Streaming ---
 	var wg sync.WaitGroup
@@ -621,7 +636,7 @@ func handleSys(args []string) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
-			fmt.Println(successColor(scanner.Text()))
+			fmt.Fprintf(os.Stdout, "%s\r\n", successColor(scanner.Text()))
 		}
 	}()
 
@@ -629,20 +644,17 @@ func handleSys(args []string) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
-			fmt.Fprintln(os.Stderr, errorColor(scanner.Text()))
+			fmt.Fprintf(os.Stderr, "%s\r\n", errorColor(scanner.Text()))
 		}
 	}()
-
-	// --- Signal Handling and Waiting ---
-	// Set up a channel to catch SIGINT (CTRL+C).
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
 
 	// Set up a channel to signal when the command has completed.
 	cmdDone := make(chan error, 1)
 	go func() {
 		cmdDone <- cmd.Wait()
 	}()
+
+	shouldReinitializeReadline := false
 
 	// --- Main Event Loop ---
 	select {
@@ -652,25 +664,120 @@ func handleSys(args []string) {
 			// This will report errors like non-zero exit statuses.
 			// It is generally expected and can be ignored if not needed.
 		}
-	case <-sigChan:
-		// CTRL+C was pressed. Send SIGINT to the entire process group of the command.
-		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT); err != nil {
-			fmt.Fprintln(os.Stderr, errorColor("Failed to interrupt command: %v", err))
+		shouldReinitializeReadline = true // Normal completion, reinit readline
+	case <-escapePressedChan:
+		fmt.Println(infoColor("\nEscape pressed. Terminating system command..."))
+		if cmd.Process != nil {
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
+				fmt.Fprintln(os.Stderr, errorColor("Failed to terminate command: %v", err))
+			}
 		}
 		// Wait for the command to actually finish after being signaled.
 		<-cmdDone
+		shouldReinitializeReadline = false // Escape works, no reinit needed
 	}
 
-	// Stop listening for our signals and clean up.
-	signal.Stop(sigChan)
-	close(sigChan)
+	// Signal key listener to stop immediately after command outcome is known.
+	close(stopKeyListenerChan)
+	// Wait for the key listener goroutine to confirm it has stopped.
+	<-keyListenerStoppedChan
 
 	// Wait for the output streaming goroutines to finish to ensure all output is flushed.
 	wg.Wait()
+
+	// Restore terminal to cooked mode *before* readline processes further input.
+	restoreMode()
+
+	// Ensure the prompt starts on a new line
+	fmt.Fprint(os.Stdout, "\r\n")
+
+	// Clear readline's buffer, update prompt, and then refresh to redraw it after command execution
+	rl.Clean()
+	updatePrompt(rl)
+	rl.Refresh()
+
+	return nil, shouldReinitializeReadline
+}
+
+// setRawMode puts the terminal into raw mode.
+func setRawMode() error {
+	var err error
+	originalTerminalState, err = term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return fmt.Errorf("failed to set raw terminal mode: %w", err)
+	}
+	return nil
+}
+
+// restoreMode restores the terminal to its original cooked mode.
+func restoreMode() {
+	if originalTerminalState != nil {
+		fd := int(os.Stdin.Fd())
+
+		// Save original file flags
+		oldFlags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
+		if err == 0 {
+			// Set non-blocking mode temporarily
+			syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, oldFlags|syscall.O_NONBLOCK)
+
+			var buf [1024]byte
+			for {
+				n, _, err := syscall.Syscall(syscall.SYS_READ, uintptr(fd), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+				if err != syscall.EAGAIN && err != syscall.EWOULDBLOCK && n != 0 { // Check if no more data or actual error
+					continue
+				}
+				break // No more data or blocking error
+			}
+
+			// Restore original file flags (blocking mode)
+			syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, oldFlags)
+		}
+
+		term.Restore(fd, originalTerminalState)
+		originalTerminalState = nil // Clear the state after restoring
+	}
+}
+
+// readKey reads a single key press from stdin in raw mode.
+// It will block until a key is pressed.
+func readKey() (rune, error) {
+	var buf [1]byte
+	n, err := os.Stdin.Read(buf[:])
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, io.EOF
+	}
+	return rune(buf[0]), nil
+}
+
+func keyPressListener(escapePressedChan chan<- struct{}, stopKeyListenerChan <-chan struct{}, keyListenerStoppedChan chan<- struct{}) {
+	defer func() { keyListenerStoppedChan <- struct{}{} }() // Signal that listener is stopped
+	for {
+		select {
+		case <-stopKeyListenerChan:
+			return // Stop the goroutine immediately when signal received
+		default:
+			key, err := readKey()
+			if err != nil {
+				// Log error, but don't stop the REPL
+				continue
+			}
+			if key == 27 { // ASCII for Escape key
+				select {
+				case escapePressedChan <- struct{}{}:
+					// Signal sent successfully
+				default:
+					// Channel is full, meaning signal already sent, ignore
+				}
+				return // Stop listening after escape is pressed
+			}
+		}
+	}
 }
 
 // handleHelp displays a list of available commands.
-
 func handleHelp() {
 
 	fmt.Println(infoColor("\n🐗 Goblin %s - Commands summary :", version.String()))
@@ -992,7 +1099,17 @@ func main() {
 			updatePrompt(rl)
 			continue
 		case ":sys":
-			handleSys(args)
+			cmdErr, reinitializeReadline := handleSys(args, rl)
+			if cmdErr != nil {
+				fmt.Fprintln(os.Stderr, errorColor("Error executing system command: %v", cmdErr))
+			}
+			if reinitializeReadline {
+				rl.Close()
+				rl, err = readline.NewEx(rlConfig)
+				if err != nil {
+					panic(err) // If readline fails to reinitialize, the REPL cannot continue.
+				}
+			}
 			updatePrompt(rl)
 			continue
 		default:
