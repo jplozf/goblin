@@ -13,7 +13,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unsafe"
 
 	"strconv"
 
@@ -596,6 +595,7 @@ func handleSys(args []string, rl *readline.Instance) (error, bool) {
 	if err := setRawMode(); err != nil {
 		return fmt.Errorf("Failed to set raw terminal mode: %w", err), true // Reinit readline on failure
 	}
+	defer restoreMode() // Ensure terminal is restored on exit from this function.
 
 	if len(args) == 0 {
 		return fmt.Errorf("Usage: :sys <command> [args...] "), false
@@ -654,7 +654,7 @@ func handleSys(args []string, rl *readline.Instance) (error, bool) {
 		cmdDone <- cmd.Wait()
 	}()
 
-	shouldReinitializeReadline := false
+	shouldReinitializeReadline := true
 
 	// --- Main Event Loop ---
 	select {
@@ -664,7 +664,6 @@ func handleSys(args []string, rl *readline.Instance) (error, bool) {
 			// This will report errors like non-zero exit statuses.
 			// It is generally expected and can be ignored if not needed.
 		}
-		shouldReinitializeReadline = true // Normal completion, reinit readline
 	case <-escapePressedChan:
 		fmt.Println(infoColor("\nEscape pressed. Terminating system command..."))
 		if cmd.Process != nil {
@@ -674,7 +673,6 @@ func handleSys(args []string, rl *readline.Instance) (error, bool) {
 		}
 		// Wait for the command to actually finish after being signaled.
 		<-cmdDone
-		shouldReinitializeReadline = false // Escape works, no reinit needed
 	}
 
 	// Signal key listener to stop immediately after command outcome is known.
@@ -690,11 +688,6 @@ func handleSys(args []string, rl *readline.Instance) (error, bool) {
 
 	// Ensure the prompt starts on a new line
 	fmt.Fprint(os.Stdout, "\r\n")
-
-	// Clear readline's buffer, update prompt, and then refresh to redraw it after command execution
-	rl.Clean()
-	updatePrompt(rl)
-	rl.Refresh()
 
 	return nil, shouldReinitializeReadline
 }
@@ -713,26 +706,6 @@ func setRawMode() error {
 func restoreMode() {
 	if originalTerminalState != nil {
 		fd := int(os.Stdin.Fd())
-
-		// Save original file flags
-		oldFlags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
-		if err == 0 {
-			// Set non-blocking mode temporarily
-			syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, oldFlags|syscall.O_NONBLOCK)
-
-			var buf [1024]byte
-			for {
-				n, _, err := syscall.Syscall(syscall.SYS_READ, uintptr(fd), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
-				if err != syscall.EAGAIN && err != syscall.EWOULDBLOCK && n != 0 { // Check if no more data or actual error
-					continue
-				}
-				break // No more data or blocking error
-			}
-
-			// Restore original file flags (blocking mode)
-			syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, oldFlags)
-		}
-
 		term.Restore(fd, originalTerminalState)
 		originalTerminalState = nil // Clear the state after restoring
 	}
@@ -754,24 +727,44 @@ func readKey() (rune, error) {
 
 func keyPressListener(escapePressedChan chan<- struct{}, stopKeyListenerChan <-chan struct{}, keyListenerStoppedChan chan<- struct{}) {
 	defer func() { keyListenerStoppedChan <- struct{}{} }() // Signal that listener is stopped
+
+	// Set stdin to non-blocking mode to allow polling.
+	fd := int(os.Stdin.Fd())
+	oldFlags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
+	if err != 0 {
+		return // Cannot proceed without fcntl.
+	}
+	defer syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, oldFlags) // Ensure flags are restored.
+
+	if _, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, oldFlags|syscall.O_NONBLOCK); err != 0 {
+		return // Cannot proceed if non-blocking mode fails.
+	}
+
+	var buf [1]byte
 	for {
 		select {
 		case <-stopKeyListenerChan:
-			return // Stop the goroutine immediately when signal received
+			return // The command has finished, so we stop listening.
 		default:
-			key, err := readKey()
-			if err != nil {
-				// Log error, but don't stop the REPL
-				continue
-			}
-			if key == 27 { // ASCII for Escape key
+			// Try to read from stdin.
+			n, readErr := syscall.Read(fd, buf[:])
+
+			if n > 0 && buf[0] == 27 { // Escape key
 				select {
 				case escapePressedChan <- struct{}{}:
-					// Signal sent successfully
 				default:
-					// Channel is full, meaning signal already sent, ignore
 				}
-				return // Stop listening after escape is pressed
+				return // Stop listening after escape is pressed.
+			}
+
+			// If there was an error, check if it was EAGAIN (no data available).
+			if readErr == syscall.EAGAIN || readErr == syscall.EWOULDBLOCK {
+				// No data, wait a bit before polling again to avoid busy-waiting.
+				time.Sleep(50 * time.Millisecond)
+				continue
+			} else if readErr != nil {
+				// An actual error occurred.
+				return
 			}
 		}
 	}
@@ -814,6 +807,9 @@ func updatePrompt(rl *readline.Instance) {
 }
 
 func main() {
+	// Defer the restoration of the terminal to ensure it's always reset on exit.
+	defer restoreMode()
+
 	initConfig() // Ensure ~/.goblin exists
 
 	fmt.Println(infoColor("🐗 Goblin %s - An enhanced REPL for Go.", version.String()))
@@ -1109,6 +1105,10 @@ func main() {
 				if err != nil {
 					panic(err) // If readline fails to reinitialize, the REPL cannot continue.
 				}
+				// After re-initializing, clean and refresh the readline instance to ensure the prompt is displayed correctly.
+				rl.Clean()
+				updatePrompt(rl)
+				rl.Refresh()
 			}
 			updatePrompt(rl)
 			continue
