@@ -105,15 +105,17 @@ func initConfig() {
 const codeTemplate = `
 package main
 
+// User-provided imports
 import (
-	"fmt"
-%s // User-provided imports
+%s 
 )
 
-%s // Global variables, constants, types, and functions
+// Global variables, constants, types, and functions
+%s 
 
+// Statements
 func main() {
-%s // Statements
+%s 
 }
 `
 
@@ -507,7 +509,7 @@ func main() {
 		if len(importLines) == 1 {
 			importBlock = "import " + strings.TrimSpace(importLines[0])
 		} else {
-			importBlock = "import (\n" + strings.Join(importLines, "\n") + "\n)"
+			importBlock = "import (\n\t" + strings.Join(importLines, "\n") + "\n)"
 		}
 		finalParts = append(finalParts, importBlock)
 	}
@@ -813,9 +815,9 @@ func main() {
 	initConfig() // Ensure ~/.goblin exists
 
 	fmt.Println(infoColor("🐗 Goblin %s - An enhanced REPL for Go.", version.String()))
-	fmt.Println(infoColor("%s", getGoVersion()))
+	fmt.Println(infoColor("%s\n", getGoVersion()))
 	fmt.Println(infoColor("Enter Go statements and type ':run' to execute."))
-	fmt.Println(infoColor("Type 'fmt.Println(...)' to display results."))
+	fmt.Println(infoColor("Type 'fmt.Println(...)' to display results, don't forget to 'import \"fmt\"' first."))
 	fmt.Println(infoColor("Type ':help' to see the available commands."))
 	fmt.Println()
 
