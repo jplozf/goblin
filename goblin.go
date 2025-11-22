@@ -600,7 +600,7 @@ func handleSys(args []string, rl *readline.Instance) (error, bool) {
 	defer restoreMode() // Ensure terminal is restored on exit from this function.
 
 	if len(args) == 0 {
-		return fmt.Errorf("Usage: :sys <command> [args...] "), false
+		return fmt.Errorf("Usage: :sys <command> [args...]\n"), false
 	}
 
 	// --- Command Setup ---
