@@ -262,7 +262,24 @@ func executeCode(code string, args []string) (string, error) {
 
 // handleList lists all saved files in the REPL_SAVES_DIR.
 func handleList() {
-	fmt.Println(infoColor("--- Saved Snippets ---"))
+	fd := int(os.Stdout.Fd())
+	width, _, err := term.GetSize(fd)
+	if err != nil {
+		// Fallback to a default width if getting terminal size fails
+		width = 80
+	}
+
+	title := " Saved Snippets "
+	padding := (width - len(title)) / 2
+	if padding < 0 {
+		padding = 0
+	}
+
+	header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+	footer := strings.Repeat("-", width)
+
+	fmt.Println(infoColor(header))
+
 	files, err := ioutil.ReadDir(REPL_SAVES_DIR)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -283,7 +300,7 @@ func handleList() {
 			fmt.Printf("> %s (%d bytes)\n", file.Name(), file.Size())
 		}
 	}
-	fmt.Println(infoColor("----------------------"))
+	fmt.Println(infoColor(footer))
 }
 
 // ensureGoExtension checks if the filename has a .go extension and adds it if missing.
@@ -913,11 +930,27 @@ func main() {
 			if len(codeLines) == 0 {
 				fmt.Println(infoColor("Code buffer is empty."))
 			} else {
-				fmt.Println(infoColor("\n--- Current Code Buffer ---"))
+				fd := int(os.Stdout.Fd())
+				width, _, err := term.GetSize(fd)
+				if err != nil {
+					// Fallback to a default width if getting terminal size fails
+					width = 80
+				}
+
+				title := " Current Code Buffer "
+				padding := (width - len(title)) / 2
+				if padding < 0 {
+					padding = 0
+				}
+
+				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+				footer := strings.Repeat("-", width)
+
+				fmt.Println(infoColor(header))
 				for i, line := range codeLines {
 					fmt.Printf("%4d: %s\n", i+1, line)
 				}
-				fmt.Println(infoColor("---------------------------"))
+				fmt.Println(infoColor(footer))
 			}
 			// Do not reset prompt if in insert mode
 			if nextInputReplacesLine == 0 {
@@ -1020,11 +1053,27 @@ func main() {
 			if len(codeLines) == 0 {
 				fmt.Println(infoColor("Code buffer is empty."))
 			} else {
-				fmt.Println(infoColor("\n--- Current Code Buffer ---"))
+				fd := int(os.Stdout.Fd())
+				width, _, err := term.GetSize(fd)
+				if err != nil {
+					// Fallback to a default width if getting terminal size fails
+					width = 80
+				}
+
+				title := " Current Code Buffer "
+				padding := (width - len(title)) / 2
+				if padding < 0 {
+					padding = 0
+				}
+
+				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+				footer := strings.Repeat("-", width)
+
+				fmt.Println(infoColor(header))
 				for i, line := range codeLines {
 					fmt.Printf("%4d: %s\n", i+1, line)
 				}
-				fmt.Println(infoColor("---------------------------"))
+				fmt.Println(infoColor(footer))
 			}
 			updatePrompt(rl)
 			continue
@@ -1063,11 +1112,27 @@ func main() {
 			if len(codeLines) == 0 {
 				fmt.Println(infoColor("Code buffer is empty."))
 			} else {
-				fmt.Println(infoColor("\n--- Current Code Buffer ---"))
+				fd := int(os.Stdout.Fd())
+				width, _, err := term.GetSize(fd)
+				if err != nil {
+					// Fallback to a default width if getting terminal size fails
+					width = 80
+				}
+
+				title := " Current Code Buffer "
+				padding := (width - len(title)) / 2
+				if padding < 0 {
+					padding = 0
+				}
+
+				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+				footer := strings.Repeat("-", width)
+
+				fmt.Println(infoColor(header))
 				for i, line := range codeLines {
 					fmt.Printf("%4d: %s\n", i+1, line)
 				}
-				fmt.Println(infoColor("---------------------------"))
+				fmt.Println(infoColor(footer))
 			}
 			updatePrompt(rl)
 			continue
@@ -1084,9 +1149,25 @@ func main() {
 
 			output, execErr := executeCode(strings.Join(codeLines, "\n"), args)
 
-			fmt.Println(infoColor("--- Output ---"))
+			fd := int(os.Stdout.Fd())
+			width, _, err := term.GetSize(fd)
+			if err != nil {
+				// Fallback to a default width if getting terminal size fails
+				width = 80
+			}
+
+			title := " Output "
+			padding := (width - len(title)) / 2
+			if padding < 0 {
+				padding = 0
+			}
+
+			header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+			footer := strings.Repeat("-", width)
+
+			fmt.Println(infoColor(header))
 			fmt.Print(outputColor(output))
-			fmt.Println(infoColor("--------------"))
+			fmt.Println(infoColor(footer))
 
 			if execErr != nil {
 				fmt.Fprintln(os.Stderr, errorColor("Code Execution Finished with Error Status."))
