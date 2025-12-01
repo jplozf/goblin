@@ -792,7 +792,7 @@ func keyPressListener(escapePressedChan chan<- struct{}, stopKeyListenerChan <-c
 // handleHelp displays a list of available commands with aligned descriptions.
 func handleHelp() {
 	fmt.Println(infoColor("\n🐗 Goblin %s - Commands summary :", version.String()))
-	fmt.Println(infoColor("Commands can be shortened if unambiguous (e.g., %s for %s, %s for %s).", ":c", ":clear", ":s", ":sys"))
+	fmt.Println(infoColor("Commands can be shortened if unambiguous (e.g., %s for %s, %s for %s).", ":c", ":clear", ":sy", ":sys"))
 
 	maxLength := 0
 	for _, cmd := range commands {
