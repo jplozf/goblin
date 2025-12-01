@@ -124,7 +124,7 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 	lines := strings.Split(code, "\n")
 
 	// Regex for identifying different code constructs
-	importSingleRegex := regexp.MustCompile(`^import\s+(\"?[\w/.]+\"?)$`)
+	importSingleRegex := regexp.MustCompile(`^import\s+("?["\w/.\"]+"?)$`)
 	importGroupRegex := regexp.MustCompile(`^import\s*\($`)
 	globalDeclStartRegex := regexp.MustCompile(`^(var|const|type)\s+`)
 	funcDeclStartRegex := regexp.MustCompile(`^func\s+`)
@@ -789,27 +789,25 @@ func keyPressListener(escapePressedChan chan<- struct{}, stopKeyListenerChan <-c
 	}
 }
 
-// handleHelp displays a list of available commands.
+// handleHelp displays a list of available commands with aligned descriptions.
 func handleHelp() {
-
 	fmt.Println(infoColor("\n🐗 Goblin %s - Commands summary :", version.String()))
-	fmt.Println(":run [args...]           - Execute the current Go code in the buffer with optional arguments.")
-	fmt.Println(":sys <command> [args...] - Execute a system command.")
-	fmt.Println(":clear                   - Clear the current code buffer.")
-	fmt.Println(":show                    - Display the current content of the code buffer.")
-	fmt.Println(":tidy                    - Format the code in the buffer.")
-	fmt.Println(":list                    - List all saved code snippets.")
-	fmt.Println(":save <file>             - Save the current code buffer to a file.")
-	fmt.Println(":saveas <file>           - Save the current buffer to a new file and make it the active snippet.")
-	fmt.Println(":load <file>             - Load code from a file into the buffer, replacing current content.")
-	fmt.Println(":rename <new_name>       - Rename the current snippet.")
-	fmt.Println(":export <filepath>       - Export the current code buffer to a full Go source file.")
-	fmt.Println(":edit                    - Open the current code buffer in an external editor for modification.")
-	fmt.Println(":u(ndo)                  - Remove the last entry from the buffer.")
-	fmt.Println(":d(elete) <line>         - Delete a specific line from the buffer by its number.")
-	fmt.Println(":i(nsert) <line>         - Insert an empty line before the provided line number.")
-	fmt.Println(":help                    - Display this help message.")
-	fmt.Println(":q(uit), :exit, :bye     - Exit the REPL.")
+	fmt.Println(infoColor("Commands can be shortened if unambiguous (e.g., %s for %s, %s for %s).", ":c", ":clear", ":s", ":sys"))
+
+	maxLength := 0
+	for _, cmd := range commands {
+		if len(cmd.Name) > maxLength {
+			maxLength = len(cmd.Name)
+		}
+	}
+
+	// Define a fixed padding after the command name for readability
+	padding := 4
+
+	for _, cmd := range commands {
+		// Format string to left-align command name and add padding
+		fmt.Printf(fmt.Sprintf("%%-%ds%%s\n", maxLength+padding), cmd.Name, "- "+cmd.Description)
+	}
 	fmt.Println()
 }
 
@@ -825,11 +823,179 @@ func updatePrompt(rl *readline.Instance) {
 	}
 }
 
+// Command holds the details for a REPL command
+type Command struct {
+	Name        string
+	Description string
+	Handler     func()
+}
+
+// commandAliases stores the dynamically generated aliases for commands.
+var commandAliases map[string]string
+
+// generateAliases generates shortest unambiguous aliases for commands.
+// It populates the global 'commandAliases' map.
+func generateAliases() {
+	commandAliases = make(map[string]string)
+
+	// Store all full command names as their own aliases initially.
+	for _, cmd := range commands {
+		commandAliases[cmd.Name] = cmd.Name
+	}
+
+	// Map to hold all possible prefixes and the commands they match
+	prefixToCommands := make(map[string][]string)
+
+	// Populate prefixToCommands with all possible prefixes for all commands
+	for _, cmd := range commands {
+		baseName := strings.TrimPrefix(cmd.Name, ":")
+		for i := 1; i <= len(baseName); i++ {
+			prefix := ":" + baseName[:i]
+			prefixToCommands[prefix] = append(prefixToCommands[prefix], cmd.Name)
+		}
+	}
+
+	// Determine the shortest unambiguous alias for each command
+	for _, cmd := range commands {
+		baseName := strings.TrimPrefix(cmd.Name, ":")
+
+		// If the command is just ":", handle it specially if it ever occurs (e.g., ":r" for ":run")
+		if baseName == "" {
+			continue // Skip if command name is empty after removing prefix
+		}
+
+		for length := 1; length <= len(baseName); length++ {
+			potentialAlias := ":" + baseName[:length]
+
+			// If this prefix uniquely maps to the current command, it's the shortest unambiguous alias
+			if len(prefixToCommands[potentialAlias]) == 1 && prefixToCommands[potentialAlias][0] == cmd.Name {
+				commandAliases[potentialAlias] = cmd.Name
+				break // Found shortest unique prefix for this command
+			}
+		}
+	}
+}
+
+// commands is the list of available REPL commands.
+var commands = []Command{
+	{
+		Name:        ":run",
+		Description: "Execute the current Go code in the buffer with optional arguments.",
+	},
+	{
+		Name:        ":sys",
+		Description: "Execute a system command.",
+	},
+	{
+		Name:        ":clear",
+		Description: "Clear the current code buffer.",
+	},
+	{
+		Name:        ":show",
+		Description: "Display the current content of the code buffer.",
+	},
+	{
+		Name:        ":tidy",
+		Description: "Format the code in the buffer.",
+	},
+	{
+		Name:        ":list",
+		Description: "List all saved code snippets.",
+	},
+	{
+		Name:        ":save",
+		Description: "Save the current code buffer to a file.",
+	},
+	{
+		Name:        ":saveas",
+		Description: "Save the current buffer to a new file and make it the active snippet.",
+	},
+	{
+		Name:        ":load",
+		Description: "Load code from a file into the buffer, replacing current content.",
+	},
+	{
+		Name:        ":rename",
+		Description: "Rename the current snippet.",
+	},
+	{
+		Name:        ":export",
+		Description: "Export the current code buffer to a full Go source file.",
+	},
+	{
+		Name:        ":edit",
+		Description: "Open the current code buffer in an external editor for modification.",
+	},
+	{
+		Name:        ":undo",
+		Description: "Remove the last entry from the buffer.",
+	},
+	{
+		Name:        ":delete",
+		Description: "Delete a specific line from the buffer by its number.",
+	},
+	{
+		Name:        ":insert",
+		Description: "Insert an empty line before the provided line number.",
+	},
+	{
+		Name:        ":help",
+		Description: "Display this help message.",
+	},
+	{
+		Name:        ":quit",
+		Description: "Exit the REPL.",
+	},
+}
+
+// resolveCommand finds a command based on the input prefix.
+// It returns the command name or an error if the command is not found.
+func resolveCommand(prefix string) (string, error) {
+	// Direct lookup in the dynamically generated aliases map.
+	if resolvedCmd, ok := commandAliases[prefix]; ok {
+		return resolvedCmd, nil
+	}
+
+	// If the exact prefix isn't an alias, it might be an ambiguous prefix.
+	// We need to check if any command starts with this prefix.
+	var potentialCommands []string
+	for fullCmd, _ := range commandAliases {
+		if strings.HasPrefix(fullCmd, prefix) {
+			potentialCommands = append(potentialCommands, fullCmd)
+		}
+	}
+
+	if len(potentialCommands) == 0 {
+		return "", fmt.Errorf("command not found: %s", prefix)
+	}
+
+	// Filter out duplicate full command names that might result from different aliases pointing to the same command
+	uniqueFullCommands := make(map[string]bool)
+	for _, pCmd := range potentialCommands {
+		uniqueFullCommands[commandAliases[pCmd]] = true
+	}
+
+	if len(uniqueFullCommands) == 1 {
+		for cmd := range uniqueFullCommands {
+			return cmd, nil
+		}
+	} else if len(uniqueFullCommands) > 1 {
+		var ambiguousNames []string
+		for cmd := range uniqueFullCommands {
+			ambiguousNames = append(ambiguousNames, cmd)
+		}
+		return "", fmt.Errorf("ambiguous command: %s. Could be any of: %s", prefix, strings.Join(ambiguousNames, ", "))
+	}
+
+	return "", fmt.Errorf("command not found: %s", prefix) // Should ideally not be reached
+}
+
 func main() {
 	// Defer the restoration of the terminal to ensure it's always reset on exit.
 	defer restoreMode()
 
-	initConfig() // Ensure ~/.goblin exists
+	initConfig()      // Ensure ~/.goblin exists
+	generateAliases() // Generate command aliases at startup
 
 	fmt.Println(infoColor("🐗 Goblin %s - An enhanced REPL for Go.", version.String()))
 	fmt.Println(infoColor("%s\n", getGoVersion()))
@@ -900,302 +1066,317 @@ func main() {
 			continue // Skip empty line
 		}
 
-		cmd := fields[0]
+		cmdStr := fields[0]
 		args := fields[1:]
 
-		// --- Handle REPL Commands ---
-		switch cmd {
-		case ":quit", ":exit", ":bye", ":q":
-			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
-				updatePrompt(rl)
-				continue
-			}
-			fmt.Println(infoColor("\n🐗 Goblin %s - https://github.com/jplozf/goblin", version.String()))
-			rl.Close()
-			return
-		case ":clear":
-			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
-				updatePrompt(rl)
-				continue
-			}
-			codeLines = []string{}
-			currentSnippetName = ""
-			lastLoadedFilePath = ""   // Reset the last loaded file path
-			nextInputReplacesLine = 0 // Reset insert mode
-			bufferDirty = false
-			fmt.Println(infoColor("Code buffer cleared."))
-			updatePrompt(rl)
-			continue
-		case ":show":
-			if len(codeLines) == 0 {
-				fmt.Println(infoColor("Code buffer is empty."))
-			} else {
-				fd := int(os.Stdout.Fd())
-				width, _, err := term.GetSize(fd)
-				if err != nil {
-					// Fallback to a default width if getting terminal size fails
-					width = 80
-				}
-
-				title := " Current Code Buffer "
-				padding := (width - len(title)) / 2
-				if padding < 0 {
-					padding = 0
-				}
-
-				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
-				footer := strings.Repeat("-", width)
-
-				fmt.Println(infoColor(header))
-				for i, line := range codeLines {
-					fmt.Printf("%4d: %s\n", i+1, line)
-				}
-				fmt.Println(infoColor(footer))
-			}
-			// Do not reset prompt if in insert mode
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":list":
-			handleList()
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":save":
-			handleSave(strings.Join(codeLines, "\n"), args)
-			bufferDirty = false
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":load":
-			if !promptToSave(rl, strings.Join(codeLines, "\n")) {
-				updatePrompt(rl)
-				continue
-			}
-			handleLoad(&codeLines, args)
-			nextInputReplacesLine = 0 // Reset insert mode
-			bufferDirty = false
-			updatePrompt(rl)
-			continue
-		case ":export":
-			if len(codeLines) == 0 {
-				fmt.Println(infoColor("No code in buffer to export."))
-				continue
-			}
-			handleExport(strings.Join(codeLines, "\n"), args)
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":edit":
-			handleEdit(&codeLines)
-			bufferDirty = true
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":insert", ":i":
-			if len(args) != 1 {
-				fmt.Println(infoColor("Usage: :insert <line_number>"))
-				continue
-			}
-			lineNum, err := strconv.Atoi(args[0])
-			if err != nil || lineNum < 1 || lineNum > len(codeLines)+1 {
-				fmt.Fprintln(os.Stderr, errorColor("Invalid line number: %s. Please provide a number between 1 and %d.", args[0], len(codeLines)+1))
-				continue
-			}
-			// Adjust for 0-based indexing
-			indexToInsert := lineNum - 1
-			codeLines = append(codeLines[:indexToInsert], append([]string{""}, codeLines[indexToInsert:]...)...)
-			bufferDirty = true
-			fmt.Println(successColor("Empty line inserted at line %d. Enter code at the prompt.", lineNum))
-			nextInputReplacesLine = lineNum // Set state for next input
-			continue
-		case ":rename":
-			handleRename(args)
-			updatePrompt(rl)
-			continue
-		case ":saveas":
-			if len(codeLines) == 0 {
-				fmt.Println(infoColor("No code in buffer to save."))
-				continue
-			}
-			handleSaveAs(strings.Join(codeLines, "\n"), args)
-			bufferDirty = false
-			updatePrompt(rl)
-			continue
-		case ":delete", ":d":
-			if len(args) != 1 {
-				fmt.Println(infoColor("Usage: :delete <line_number>"))
-				continue
-			}
-			lineNum, err := strconv.Atoi(args[0])
-			if err != nil || lineNum < 1 || lineNum > len(codeLines) {
-				fmt.Fprintln(os.Stderr, errorColor("Invalid line number: %s. Please provide a number between 1 and %d.", args[0], len(codeLines)))
-				continue
-			}
-
-			// Cancel insert mode if it's affected
-			if nextInputReplacesLine > 0 {
-				fmt.Println(infoColor("Insert mode cancelled."))
-				nextInputReplacesLine = 0
-			}
-
-			// Adjust for 0-based indexing
-			indexToDelete := lineNum - 1
-			codeLines = append(codeLines[:indexToDelete], codeLines[indexToDelete+1:]...)
-			bufferDirty = true
-			fmt.Println(successColor("Line %d deleted. Current buffer:", lineNum))
-			// Re-display the buffer with line numbers
-			if len(codeLines) == 0 {
-				fmt.Println(infoColor("Code buffer is empty."))
-			} else {
-				fd := int(os.Stdout.Fd())
-				width, _, err := term.GetSize(fd)
-				if err != nil {
-					// Fallback to a default width if getting terminal size fails
-					width = 80
-				}
-
-				title := " Current Code Buffer "
-				padding := (width - len(title)) / 2
-				if padding < 0 {
-					padding = 0
-				}
-
-				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
-				footer := strings.Repeat("-", width)
-
-				fmt.Println(infoColor(header))
-				for i, line := range codeLines {
-					fmt.Printf("%4d: %s\n", i+1, line)
-				}
-				fmt.Println(infoColor(footer))
-			}
-			updatePrompt(rl)
-			continue
-		case ":help":
-			handleHelp()
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":undo", ":u":
-			if len(codeLines) > 0 {
-				codeLines = codeLines[:len(codeLines)-1]
-				bufferDirty = true
-				fmt.Println(successColor("Last entry removed."))
-			} else {
-				fmt.Println(infoColor("Buffer is empty, nothing to undo."))
-			}
-			if nextInputReplacesLine == 0 {
-				updatePrompt(rl)
-			}
-			continue
-		case ":tidy":
-			if len(codeLines) == 0 {
-				fmt.Println(infoColor("No code in buffer to tidy."))
-				continue
-			}
-			tidiedLines, err := handleTidy(strings.Join(codeLines, "\n"))
+		if isCommand {
+			resolvedCmd, err := resolveCommand(cmdStr)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, errorColor("Error tidying code: %v", err))
-				continue
-			}
-			codeLines = tidiedLines
-			bufferDirty = true
-			fmt.Println(successColor("Code buffer tidied."))
-			// Re-display the buffer with line numbers
-			if len(codeLines) == 0 {
-				fmt.Println(infoColor("Code buffer is empty."))
-			} else {
-				fd := int(os.Stdout.Fd())
-				width, _, err := term.GetSize(fd)
-				if err != nil {
-					// Fallback to a default width if getting terminal size fails
-					width = 80
+				// If the command is not found, treat it as code
+				if strings.Contains(err.Error(), "command not found") {
+					codeLines = append(codeLines, input)
+					bufferDirty = true
+					rl.SetPrompt(" -> ")
+					continue
 				}
-
-				title := " Current Code Buffer "
-				padding := (width - len(title)) / 2
-				if padding < 0 {
-					padding = 0
-				}
-
-				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
-				footer := strings.Repeat("-", width)
-
-				fmt.Println(infoColor(header))
-				for i, line := range codeLines {
-					fmt.Printf("%4d: %s\n", i+1, line)
-				}
-				fmt.Println(infoColor(footer))
-			}
-			updatePrompt(rl)
-			continue
-		case ":run":
-			if nextInputReplacesLine > 0 {
-				fmt.Println("Cannot run while in insert mode. Finish editing the line first.")
-				continue
-			}
-			// Execute the accumulated code
-			if len(codeLines) == 0 {
-				fmt.Println("No code to run. Add statements first.")
+				fmt.Fprintln(os.Stderr, errorColor("%v", err))
 				continue
 			}
 
-			output, execErr := executeCode(strings.Join(codeLines, "\n"), args)
-
-			fd := int(os.Stdout.Fd())
-			width, _, err := term.GetSize(fd)
-			if err != nil {
-				// Fallback to a default width if getting terminal size fails
-				width = 80
-			}
-
-			title := " Output "
-			padding := (width - len(title)) / 2
-			if padding < 0 {
-				padding = 0
-			}
-
-			header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
-			footer := strings.Repeat("-", width)
-
-			fmt.Println(infoColor(header))
-			fmt.Print(outputColor(output))
-			fmt.Println(infoColor(footer))
-
-			if execErr != nil {
-				fmt.Fprintln(os.Stderr, errorColor("Code Execution Finished with Error Status."))
-			} else {
-				fmt.Println(successColor("Code Execution Successful."))
-			}
-
-			updatePrompt(rl)
-			continue
-		case ":sys":
-			cmdErr, reinitializeReadline := handleSys(args, rl)
-			if cmdErr != nil {
-				fmt.Fprintln(os.Stderr, errorColor("Error executing system command: %v", cmdErr))
-			}
-			if reinitializeReadline {
+			// --- Handle REPL Commands ---
+			switch resolvedCmd {
+			case ":quit":
+				if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+					updatePrompt(rl)
+					continue
+				}
+				fmt.Println(infoColor("\n🐗 Goblin %s - https://github.com/jplozf/goblin", version.String()))
 				rl.Close()
-				rl, err = readline.NewEx(rlConfig)
-				if err != nil {
-					panic(err) // If readline fails to reinitialize, the REPL cannot continue.
+				return
+			case ":clear":
+				if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+					updatePrompt(rl)
+					continue
 				}
-				// After re-initializing, clean and refresh the readline instance to ensure the prompt is displayed correctly.
-				rl.Clean()
+				codeLines = []string{}
+				currentSnippetName = ""
+				lastLoadedFilePath = ""   // Reset the last loaded file path
+				nextInputReplacesLine = 0 // Reset insert mode
+				bufferDirty = false
+				fmt.Println(infoColor("Code buffer cleared."))
 				updatePrompt(rl)
-				rl.Refresh()
+				continue
+			case ":show":
+				if len(codeLines) == 0 {
+					fmt.Println(infoColor("Code buffer is empty."))
+				} else {
+					fd := int(os.Stdout.Fd())
+					width, _, err := term.GetSize(fd)
+					if err != nil {
+						// Fallback to a default width if getting terminal size fails
+						width = 80
+					}
+
+					title := " Current Code Buffer "
+					padding := (width - len(title)) / 2
+					if padding < 0 {
+						padding = 0
+					}
+
+					header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+					footer := strings.Repeat("-", width)
+
+					fmt.Println(infoColor(header))
+					for i, line := range codeLines {
+						fmt.Printf("%4d: %s\n", i+1, line)
+					}
+					fmt.Println(infoColor(footer))
+				}
+				// Do not reset prompt if in insert mode
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":list":
+				handleList()
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":save":
+				handleSave(strings.Join(codeLines, "\n"), args)
+				bufferDirty = false
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":load":
+				if !promptToSave(rl, strings.Join(codeLines, "\n")) {
+					updatePrompt(rl)
+					continue
+				}
+				handleLoad(&codeLines, args)
+				nextInputReplacesLine = 0 // Reset insert mode
+				bufferDirty = false
+				updatePrompt(rl)
+				continue
+			case ":export":
+				if len(codeLines) == 0 {
+					fmt.Println(infoColor("No code in buffer to export."))
+					continue
+				}
+				handleExport(strings.Join(codeLines, "\n"), args)
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":edit":
+				handleEdit(&codeLines)
+				bufferDirty = true
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":insert":
+				if len(args) != 1 {
+					fmt.Println(infoColor("Usage: :insert <line_number>"))
+					continue
+				}
+				lineNum, err := strconv.Atoi(args[0])
+				if err != nil || lineNum < 1 || lineNum > len(codeLines)+1 {
+					fmt.Fprintln(os.Stderr, errorColor("Invalid line number: %s. Please provide a number between 1 and %d.", args[0], len(codeLines)+1))
+					continue
+				}
+				// Adjust for 0-based indexing
+				indexToInsert := lineNum - 1
+				codeLines = append(codeLines[:indexToInsert], append([]string{""}, codeLines[indexToInsert:]...)...)
+				bufferDirty = true
+				fmt.Println(successColor("Empty line inserted at line %d. Enter code at the prompt.", lineNum))
+				nextInputReplacesLine = lineNum // Set state for next input
+				continue
+			case ":rename":
+				handleRename(args)
+				updatePrompt(rl)
+				continue
+			case ":saveas":
+				if len(codeLines) == 0 {
+					fmt.Println(infoColor("No code in buffer to save."))
+					continue
+				}
+				handleSaveAs(strings.Join(codeLines, "\n"), args)
+				bufferDirty = false
+				updatePrompt(rl)
+				continue
+			case ":delete":
+				if len(args) != 1 {
+					fmt.Println(infoColor("Usage: :delete <line_number>"))
+					continue
+				}
+				lineNum, err := strconv.Atoi(args[0])
+				if err != nil || lineNum < 1 || lineNum > len(codeLines) {
+					fmt.Fprintln(os.Stderr, errorColor("Invalid line number: %s. Please provide a number between 1 and %d.", args[0], len(codeLines)))
+					continue
+				}
+
+				// Cancel insert mode if it's affected
+				if nextInputReplacesLine > 0 {
+					fmt.Println(infoColor("Insert mode cancelled."))
+					nextInputReplacesLine = 0
+				}
+
+				// Adjust for 0-based indexing
+				indexToDelete := lineNum - 1
+				codeLines = append(codeLines[:indexToDelete], codeLines[indexToDelete+1:]...)
+				bufferDirty = true
+				fmt.Println(successColor("Line %d deleted. Current buffer:", lineNum))
+				// Re-display the buffer with line numbers
+				if len(codeLines) == 0 {
+					fmt.Println(infoColor("Code buffer is empty."))
+				} else {
+					fd := int(os.Stdout.Fd())
+					width, _, err := term.GetSize(fd)
+					if err != nil {
+						// Fallback to a default width if getting terminal size fails
+						width = 80
+					}
+
+					title := " Current Code Buffer "
+					padding := (width - len(title)) / 2
+					if padding < 0 {
+						padding = 0
+					}
+
+					header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+					footer := strings.Repeat("-", width)
+
+					fmt.Println(infoColor(header))
+					for i, line := range codeLines {
+						fmt.Printf("%4d: %s\n", i+1, line)
+					}
+					fmt.Println(infoColor(footer))
+				}
+				updatePrompt(rl)
+				continue
+			case ":help":
+				handleHelp()
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":undo":
+				if len(codeLines) > 0 {
+					codeLines = codeLines[:len(codeLines)-1]
+					bufferDirty = true
+					fmt.Println(successColor("Last entry removed."))
+				} else {
+					fmt.Println(infoColor("Buffer is empty, nothing to undo."))
+				}
+				if nextInputReplacesLine == 0 {
+					updatePrompt(rl)
+				}
+				continue
+			case ":tidy":
+				if len(codeLines) == 0 {
+					fmt.Println(infoColor("No code in buffer to tidy."))
+					continue
+				}
+				tidiedLines, err := handleTidy(strings.Join(codeLines, "\n"))
+				if err != nil {
+					fmt.Fprintln(os.Stderr, errorColor("Error tidying code: %v", err))
+					continue
+				}
+				codeLines = tidiedLines
+				bufferDirty = true
+				fmt.Println(successColor("Code buffer tidied."))
+				// Re-display the buffer with line numbers
+				if len(codeLines) == 0 {
+					fmt.Println(infoColor("Code buffer is empty."))
+				} else {
+					fd := int(os.Stdout.Fd())
+					width, _, err := term.GetSize(fd)
+					if err != nil {
+						// Fallback to a default width if getting terminal size fails
+						width = 80
+					}
+
+					title := " Current Code Buffer "
+					padding := (width - len(title)) / 2
+					if padding < 0 {
+						padding = 0
+					}
+
+					header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+					footer := strings.Repeat("-", width)
+
+					fmt.Println(infoColor(header))
+					for i, line := range codeLines {
+						fmt.Printf("%4d: %s\n", i+1, line)
+					}
+					fmt.Println(infoColor(footer))
+				}
+				updatePrompt(rl)
+				continue
+			case ":run":
+				if nextInputReplacesLine > 0 {
+					fmt.Println("Cannot run while in insert mode. Finish editing the line first.")
+					continue
+				}
+				// Execute the accumulated code
+				if len(codeLines) == 0 {
+					fmt.Println("No code to run. Add statements first.")
+					continue
+				}
+
+				output, execErr := executeCode(strings.Join(codeLines, "\n"), args)
+
+				fd := int(os.Stdout.Fd())
+				width, _, err := term.GetSize(fd)
+				if err != nil {
+					// Fallback to a default width if getting terminal size fails
+					width = 80
+				}
+
+				title := " Output "
+				padding := (width - len(title)) / 2
+				if padding < 0 {
+					padding = 0
+				}
+
+				header := strings.Repeat("-", padding) + title + strings.Repeat("-", width-padding-len(title))
+				footer := strings.Repeat("-", width)
+
+				fmt.Println(infoColor(header))
+				fmt.Print(outputColor(output))
+				fmt.Println(infoColor(footer))
+
+				if execErr != nil {
+					fmt.Fprintln(os.Stderr, errorColor("Code Execution Finished with Error Status."))
+				} else {
+					fmt.Println(successColor("Code Execution Successful."))
+				}
+
+				updatePrompt(rl)
+				continue
+			case ":sys":
+				cmdErr, reinitializeReadline := handleSys(args, rl)
+				if cmdErr != nil {
+					fmt.Fprintln(os.Stderr, errorColor("Error executing system command: %v", cmdErr))
+				}
+				if reinitializeReadline {
+					rl.Close()
+					rl, err = readline.NewEx(rlConfig)
+					if err != nil {
+						panic(err) // If readline fails to reinitialize, the REPL cannot continue.
+					}
+					// After re-initializing, clean and refresh the readline instance to ensure the prompt is displayed correctly.
+					rl.Clean()
+					updatePrompt(rl)
+					rl.Refresh()
+				}
+				updatePrompt(rl)
+				continue
 			}
-			updatePrompt(rl)
-			continue
-		default:
+		} else {
 			// --- Accumulate Code ---
 			codeLines = append(codeLines, input) // Use raw input to preserve indentation
 			bufferDirty = true
