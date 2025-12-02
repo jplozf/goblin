@@ -472,6 +472,45 @@ func handleRename(args []string) {
 	fmt.Println(successColor("Snippet successfully renamed to '%s'.", newFilename))
 }
 
+// handleRemove removes a saved snippet.
+func handleRemove(args []string, rl *readline.Instance) {
+	if len(args) != 1 {
+		fmt.Println(infoColor("Usage: :remove <filename>"))
+		return
+	}
+
+	filename := ensureGoExtension(args[0])
+	filePath := filepath.Join(REPL_SAVES_DIR, filename)
+
+	// Check if the file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		fmt.Fprintln(os.Stderr, errorColor("Error: Snippet '%s' not found.", filename))
+		return
+	}
+
+	// Ask for confirmation
+	rl.SetPrompt(infoColor("Are you sure you want to remove snippet '%s'? (y/n) ", filename))
+	answer, err := rl.Readline()
+	if err != nil {
+		fmt.Println(errorColor("\nOperation cancelled."))
+		return
+	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" {
+		fmt.Println(infoColor("Removal cancelled."))
+		return
+	}
+
+	// Remove the file
+	if err := os.Remove(filePath); err != nil {
+		fmt.Fprintln(os.Stderr, errorColor("Error removing snippet '%s': %v", filename, err))
+		return
+	}
+
+	fmt.Println(successColor("Snippet '%s' removed successfully.", filename))
+}
+
 // handleTidy formats the current code buffer using go/format.
 func handleTidy(code string) ([]string, error) {
 	// A local template for formatting. Comments are removed to prevent them
@@ -796,8 +835,8 @@ func handleHelp() {
 
 	maxLength := 0
 	for _, cmd := range commands {
-		if len(cmd.Name) > maxLength {
-			maxLength = len(cmd.Name)
+		if len(cmd.Name + " " + cmd.Args) > maxLength {
+			maxLength = len(cmd.Name + " " + cmd.Args)
 		}
 	}
 
@@ -806,7 +845,7 @@ func handleHelp() {
 
 	for _, cmd := range commands {
 		// Format string to left-align command name and add padding
-		fmt.Printf(fmt.Sprintf("%%-%ds%%s\n", maxLength+padding), cmd.Name, "- "+cmd.Description)
+		fmt.Printf(fmt.Sprintf("%%-%ds%%s\n", maxLength+padding), cmd.Name + " " + cmd.Args, "- "+cmd.Description)
 	}
 	fmt.Println()
 }
@@ -826,6 +865,7 @@ func updatePrompt(rl *readline.Instance) {
 // Command holds the details for a REPL command
 type Command struct {
 	Name        string
+	Args 		string
 	Description string
 	Handler     func()
 }
@@ -880,70 +920,92 @@ func generateAliases() {
 var commands = []Command{
 	{
 		Name:        ":run",
+		Args:		 "[args]",
 		Description: "Execute the current Go code in the buffer with optional arguments.",
 	},
 	{
 		Name:        ":sys",
+		Args:		 "<system command> [args,...]",
 		Description: "Execute a system command.",
 	},
 	{
 		Name:        ":clear",
+		Args:		 "",
 		Description: "Clear the current code buffer.",
 	},
 	{
 		Name:        ":show",
+		Args:		 "",
 		Description: "Display the current content of the code buffer.",
 	},
 	{
 		Name:        ":tidy",
+		Args:		 "",
 		Description: "Format the code in the buffer.",
 	},
 	{
 		Name:        ":list",
+		Args:		 "",
 		Description: "List all saved code snippets.",
 	},
 	{
 		Name:        ":save",
+		Args:        "[<file>]",
 		Description: "Save the current code buffer to a file.",
 	},
 	{
 		Name:        ":saveas",
+		Args:        "<file>",
 		Description: "Save the current buffer to a new file and make it the active snippet.",
 	},
 	{
 		Name:        ":load",
+		Args:        "<file>",
 		Description: "Load code from a file into the buffer, replacing current content.",
 	},
 	{
 		Name:        ":rename",
+		Args:        "<file>",
 		Description: "Rename the current snippet.",
 	},
 	{
+		Name:        ":remove",
+		Args:        "",
+		Description: "Remove a saved snippet.",
+	},
+	{
 		Name:        ":export",
+		Args:        "[<path>]",
 		Description: "Export the current code buffer to a full Go source file.",
 	},
 	{
 		Name:        ":edit",
+		Args:        "",
 		Description: "Open the current code buffer in an external editor for modification.",
 	},
 	{
 		Name:        ":undo",
+		Args:        "",
 		Description: "Remove the last entry from the buffer.",
 	},
 	{
 		Name:        ":delete",
+		Args:        "<line>",
 		Description: "Delete a specific line from the buffer by its number.",
 	},
 	{
 		Name:        ":insert",
+		Args:        "<line>",
 		Description: "Insert an empty line before the provided line number.",
 	},
 	{
 		Name:        ":help",
+		Args:        "",
 		Description: "Display this help message.",
 	},
 	{
 		Name:        ":quit",
+		Args:        "",
 		Description: "Exit the REPL.",
 	},
 }
@@ -1196,6 +1258,10 @@ func main() {
 				continue
 			case ":rename":
 				handleRename(args)
+				updatePrompt(rl)
+				continue
+			case ":remove":
+				handleRemove(args, rl)
 				updatePrompt(rl)
 				continue
 			case ":saveas":
