@@ -123,22 +123,38 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 	var userImportsBuilder, topLevelDeclarationsBuilder, statementsBuilder strings.Builder
 	lines := strings.Split(code, "\n")
 
+	// Strip shebang if present
+	if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "#!") {
+		lines = lines[1:]
+	}
+
+	var filteredLines []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "package main" {
+			continue // Skip 'package main' from user's script
+		}
+		filteredLines = append(filteredLines, line)
+	}
+	lines = filteredLines
+
 	// Regex for identifying different code constructs
 	importSingleRegex := regexp.MustCompile(`^import\s+("?["\w/.\"]+"?)$`)
 	importGroupRegex := regexp.MustCompile(`^import\s*\($`)
 	globalDeclStartRegex := regexp.MustCompile(`^(var|const|type)\s+`)
 	funcDeclStartRegex := regexp.MustCompile(`^func\s+`)
+	mainFuncSignatureRegex := regexp.MustCompile(`^func\s+main\s*\(\s*\)\s*\{`) // Specific for func main() {
 
 	inImportBlock := false
 	inGlobalDeclBlock := false // For multi-line var/const/type blocks
-	inFuncDecl := false
+	inFuncDecl := false        // General function declaration
+	inUserMainFunc := false    // Specifically for the user's func main()
 	braceCount := 0
 
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 
 		// Skip empty lines at the top level, they don't affect parsing logic
-		if trimmedLine == "" && !inImportBlock && !inGlobalDeclBlock && !inFuncDecl {
+		if trimmedLine == "" && !inImportBlock && !inGlobalDeclBlock && !inFuncDecl && !inUserMainFunc {
 			continue
 		}
 
@@ -166,8 +182,30 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 			continue
 		}
 
+		// --- Handle User's main function ---
+		// We prioritize matching the user's main function over general funcDeclStartRegex
+		if !inImportBlock && !inGlobalDeclBlock && !inFuncDecl && mainFuncSignatureRegex.MatchString(trimmedLine) {
+			inUserMainFunc = true
+			braceCount = 1 // Start of main function body (after the opening brace)
+			continue       // Do not write "func main() {" to statementsBuilder
+		}
+		if inUserMainFunc {
+			braceCount += strings.Count(line, "{")
+			braceCount -= strings.Count(line, "}")
+			if braceCount <= 0 { // End of user's main function
+				inUserMainFunc = false
+				braceCount = 0 // Reset brace count
+				// We do NOT continue here, as the closing brace of main() should also be excluded.
+				continue
+			}
+			// These are the statements inside the user's main function
+			statementsBuilder.WriteString(line + "\n")
+			continue
+		}
+
 		// --- Handle Global Declarations (var, const, type) ---
-		if !inFuncDecl && !inImportBlock && globalDeclStartRegex.MatchString(trimmedLine) {
+		// This block should come before general statements, but after specific func main detection
+		if !inFuncDecl && !inImportBlock && !inUserMainFunc && globalDeclStartRegex.MatchString(trimmedLine) {
 			// Check for multi-line var/const/type blocks
 			if strings.HasSuffix(trimmedLine, "(") { // e.g., var (
 				inGlobalDeclBlock = true
@@ -191,8 +229,9 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 			continue
 		}
 
-		// --- Handle Function Declarations ---
-		if !inImportBlock && !inGlobalDeclBlock && funcDeclStartRegex.MatchString(trimmedLine) {
+		// --- Handle General Function Declarations (other than main) ---
+		// This block must come after Global Declarations and UserMainFunc handling
+		if !inImportBlock && !inGlobalDeclBlock && !inUserMainFunc && funcDeclStartRegex.MatchString(trimmedLine) {
 			inFuncDecl = true
 			topLevelDeclarationsBuilder.WriteString(line + "\n")
 			braceCount += strings.Count(line, "{")
@@ -210,7 +249,7 @@ func separateCodeParts(code string) (userImports, topLevelDeclarations, statemen
 			continue
 		}
 
-		// --- Handle Statements (everything else) ---
+		// --- Handle Remaining Statements (outside of any block) ---
 		if trimmedLine != "" {
 			statementsBuilder.WriteString(line + "\n")
 		}
@@ -1058,6 +1097,31 @@ func main() {
 
 	initConfig()      // Ensure ~/.goblin exists
 	generateAliases() // Generate command aliases at startup
+
+	// If arguments are provided, assume script execution mode.
+	if len(os.Args) > 1 {
+		scriptPath := os.Args[1]
+		scriptArgs := []string{}
+		if len(os.Args) > 2 {
+			scriptArgs = os.Args[2:]
+		}
+
+		codeBytes, err := ioutil.ReadFile(scriptPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, errorColor("Error reading script file '%s': %v", scriptPath, err))
+			os.Exit(1)
+		}
+
+		code := string(codeBytes)
+		output, execErr := executeCode(code, scriptArgs)
+
+		fmt.Print(output) // Print script output directly
+
+		if execErr != nil {
+			os.Exit(1) // Exit with error status if script execution failed
+		}
+		os.Exit(0) // Exit successfully after script execution
+	}
 
 	fmt.Println(infoColor("🐗 Goblin %s - An enhanced REPL for Go.", version.String()))
 	fmt.Println(infoColor("%s\n", getGoVersion()))

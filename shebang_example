@@ -1,0 +1,13 @@
+#!/usr/bin/env goblin
+package main
+
+import "fmt"
+import "os"
+
+func main() {
+	fmt.Println("Hello from goblin!")
+	if len(os.Args) > 0 {
+		fmt.Printf("Arguments: %v\n", os.Args)
+	}
+}
+
